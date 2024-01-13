@@ -189,14 +189,18 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
     # for data in train_loader:
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
+        # TODO: be careful with video size
+        # N = 2 by default
         video, label = data # B, N, C, T, H, W
         label = label.to(gpu)
         video = video.to(gpu)
 
+        # random differentiation step
         # if rand:
         if random.random() < 0.5:
             video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
 
+        # scheduled differentiation step
         if diff:
             video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
         if mix:
@@ -369,6 +373,7 @@ def main():
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
 
+        # TODO: differentiation control
         if i%4 == 0:
             # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
             train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)

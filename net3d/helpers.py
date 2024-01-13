@@ -322,7 +322,7 @@ class LatentODEblock(nn.Module):
         # print(out.size())
         return out[1:] # omit the first output
 
-
+# Scott TODO: Read and understand
 class NetHook(nn.Module):
     def __init__(self, net, layer = -2):
         super().__init__()
@@ -367,7 +367,7 @@ class NetHook(nn.Module):
         representation = self.get_representation(x)
         return representation
 
-
+# Scott TODO: Read and understand
 class NetWrapper(nn.Module):
     def __init__(self, net, projection_size, projection_hidden_size, layer = -2, use_simsiam_mlp = False, use_projector = True, num_layer = 2, bn_last = False):
         super().__init__()
