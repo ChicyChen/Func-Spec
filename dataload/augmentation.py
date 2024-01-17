@@ -73,6 +73,20 @@ def default_transform2():
         Normalize()
     ])
     return transform
+
+def videofmri_transform():
+    transform = transforms.Compose([
+        Scale(size=128),
+        RandomHorizontalFlip(consistent=True),
+        RandomSizedCrop(size=112, consistent=True), # Siyi: strong crop
+        Scale(size=(112,112)),
+        GaussianBlur(size=112, p=0.5, consistent=True),
+        ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.8),
+        RandomGray(consistent=False, p=0.2),
+        ToTensor(),
+        Normalize()
+    ])
+    return transform
     
 
 class GaussianBlur:
