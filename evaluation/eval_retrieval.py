@@ -3,6 +3,8 @@ import sys
 import argparse
 
 sys.path.append("/home/siyich/Func-Spec/utils")
+sys.path.append("/home/siyich/Func-Spec/net3d")
+sys.path.append("/home/siyich/Func-Spec/dataload")
 
 from retrieval import *
 
@@ -13,8 +15,7 @@ from torchvision import models
 from torchvision import transforms as T
 import torch.nn.functional as F
 
-# from dataloader_v2 import get_data_ucf
-from dataloader_v3 import get_data_ucf, get_data_hmdb
+from dataloader_test import get_data_ucf, get_data_hmdb
 from torch.utils.data import DataLoader
 
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -45,7 +46,7 @@ parser.add_argument('--downsample', default=4, type=int)
 parser.add_argument('--inter_len', default=0, type=int)
 # parser.add_argument('--num_aug', default=1, type=int)
 
-parser.add_argument('--img_size', default=128, type=int)
+parser.add_argument('--img_size', default=112, type=int)
 parser.add_argument('--r21d', action='store_true')
 parser.add_argument('--mc3', action='store_true')
 parser.add_argument('--s3d', action='store_true')
@@ -53,26 +54,13 @@ parser.add_argument('--s3d', action='store_true')
 
 parser.add_argument('--diff', action='store_true')
 
-
-# def default_transform():
-#     transform = transforms.Compose([
-#         RandomHorizontalFlip(consistent=True),
-#         RandomCrop(size=128, consistent=True),
-#         Scale(size=(128,128)),
-#         GaussianBlur(size=128, p=0.5, consistent=True),
-#         ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.8),
-#         RandomGray(consistent=False, p=0.2),
-#         ToTensor(),
-#         Normalize()
-#     ])
-#     return transform
-
+# python evaluation/eval_retrieval.py --ckpt_folder checkpoints/ucf1.0_pcn_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse --epoch_num 400
 
 def test_transform():
     transform = transforms.Compose([
-        RandomCrop(size=args.img_size, consistent=True),
-        # Scale(size=(128, 128)),
-        # RandomSizedCrop(size=args.img_size, consistent=True),
+        Scale(size=128),
+        # RandomCrop(size=args.img_size, consistent=True),
+        RandomSizedCrop(size=args.img_size, consistent=True),
         Scale(size=(112, 112)),
         ToTensor(),
         Normalize()
@@ -234,17 +222,12 @@ def main():
         logging.info(f"k-nn accuracy performed on ucf \n")
         train_loader = get_data_ucf(batch_size=args.batch_size, 
                                     mode='train', 
-                                    # transform=default_transform(), 
-                                    # transform2=default_transform(),
-                                    # transform_consistent=test_transform(),
-                                    # transform_inconsistent=None,
                                     transform_consistent=None,
                                     transform_inconsistent=test_transform(),
                                     seq_len=args.seq_len, 
                                     num_seq=args.num_seq, 
                                     downsample=args.downsample,
                                     inter_len=args.inter_len,
-                                    # num_aug=args.num_aug,
                                     dim=dim,
                                     frame_root='/data',
                                     # random=True,
@@ -252,17 +235,12 @@ def main():
                                     )
         test_loader = get_data_ucf(batch_size=args.batch_size, 
                                     mode='test', 
-                                    # transform=default_transform(), 
-                                    # transform2=default_transform(),
-                                    # transform_consistent=test_transform(),
-                                    # transform_inconsistent=None,
                                     transform_consistent=None,
                                     transform_inconsistent=test_transform(),
                                     seq_len=args.seq_len, 
                                     num_seq=args.num_seq, 
                                     inter_len=args.inter_len,
                                     downsample=args.downsample,
-                                    # num_aug=args.num_aug,
                                     dim=dim,
                                     frame_root='/data',
                                     # random=True,
@@ -272,10 +250,6 @@ def main():
         logging.info(f"k-nn accuracy performed on hmdb \n")
         train_loader = get_data_hmdb(batch_size=args.batch_size, 
                                     mode='train', 
-                                    # transform=test_transform(),
-                                    # transform2=test_transform(),
-                                    # transform=default_transform(), 
-                                    # transform2=default_transform(),
                                     transform_consistent=None,
                                     transform_inconsistent=test_transform(),
                                     seq_len=args.seq_len, 
@@ -289,10 +263,6 @@ def main():
                                     )
         test_loader = get_data_hmdb(batch_size=args.batch_size, 
                                     mode='test', 
-                                    # transform=test_transform(),
-                                    # transform2=test_transform(),
-                                    # transform=default_transform(), 
-                                    # transform2=default_transform(),
                                     transform_consistent=None,
                                     transform_inconsistent=test_transform(),
                                     seq_len=args.seq_len, 
@@ -304,28 +274,6 @@ def main():
                                     # random=True,
                                     test=True
                                     )
-    # else:
-    #     logging.info(f"k-nn accuracy performed on mnist \n")
-    #     train_loader = get_data_mnist(batch_size=args.batch_size, 
-    #                                 mode='train', 
-    #                                 transform=test_transform(),
-    #                                 transform2=test_transform(),
-    #                                 # transform=default_transform(), 
-    #                                 # transform2=default_transform(),
-    #                                 seq_len=args.seq_len, 
-    #                                 num_seq=args.num_seq, 
-    #                                 downsample=args.downsample,
-    #                                 num_aug=args.num_aug)
-    #     test_loader = get_data_mnist(batch_size=args.batch_size, 
-    #                                 mode='test', 
-    #                                 transform=test_transform(),
-    #                                 transform2=test_transform(),
-    #                                 # transform=default_transform(), 
-    #                                 # transform2=default_transform(),
-    #                                 seq_len=args.seq_len, 
-    #                                 num_seq=args.num_seq, 
-    #                                 downsample=args.downsample,
-    #                                 num_aug=args.num_aug)
 
     # random weight
     if args.random:

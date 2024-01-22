@@ -375,17 +375,17 @@ def main():
 
         # TODO: differentiation control
         if i%4 == 0:
-            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
+            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
         elif i%4 == 1:
-            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
             train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
+            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
         elif i%4 == 2:
-            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
             train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
+            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
         else:
-            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
+            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
         
         # current_time = time.time()
         if args.rank == 0:
