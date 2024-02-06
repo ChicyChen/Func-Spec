@@ -1,5 +1,9 @@
+#train 2s file, version of hyperparameters tuning using raytune, 
+# this file is currently not working seems due to some unknown environment problem.
 import os
 import sys
+import pandas as pd
+import functools as ft
 from importlib import reload
 # reload(sys)
 # sys.setdefaultencoding('utf-8')
@@ -8,7 +12,7 @@ sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 
-from vicclr import VICCLR
+from vicclr2s import VICCLR2S
 
 import random
 import math
@@ -18,6 +22,8 @@ from torch import nn, optim
 from torchvision import models
 from torchvision import transforms as T
 import torch.nn.functional as F
+from ray import train, tune
+from ray.tune.schedulers import ASHAScheduler
 
 from dataloader import get_data_ucf, get_data_k400, get_data_mk200, get_data_mk400, get_data_minik
 from torch.utils.data import DataLoader
@@ -42,7 +48,7 @@ parser.add_argument('--frame_root', default='/data', type=str,
                     help='root folder to store data like UCF101/..., better to put in servers SSD \
                     default path is mounted from data server for the home directory')
 # --frame_root /data
-                    
+
 parser.add_argument('--gpu', default='0,1,2,3,4,5,6,7', type=str)
 
 parser.add_argument('--epochs', default=400, type=int,
@@ -99,14 +105,15 @@ parser.add_argument('--mk200', action='store_true')
 parser.add_argument('--mk400', action='store_true')
 parser.add_argument('--minik', action='store_true')
 parser.add_argument('--k400', action='store_true')
-parser.add_argument('--fraction', default=1.0, type=float)
+parser.add_argument('--fraction', default=1.0, type=float) # fraction of the full cleaned dataset
 
 
-def adjust_learning_rate(args, optimizer, loader, step):
+
+def adjust_learning_rate(args, config, optimizer, loader, step): # add a config input, and do changes like "args.base_lr --> config['base_lr']"
     max_steps = args.epochs * len(loader)
     # warmup_steps = 10 * len(loader)
     warmup_steps = 0
-    base_lr = args.base_lr * args.batch_size / 256
+    base_lr = config['base_lr'] * config['batch_size'] / 256 # replace args.base_lr and args.batch_size with config["base_lr"] and config["batch_size"], config is a dictionary that represent the search space;
     if step < warmup_steps:
         lr = base_lr * step / warmup_steps
     else:
@@ -179,7 +186,7 @@ class LARS(optim.Optimizer):
                 p.add_(mu, alpha=-g["lr"])
 
 
-def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scaler=None, train=True, diff=False, mix=False, mix2=False):
+def train_one_epoch(args,config, model, train_loader, optimizer, epoch, gpu=None, scaler=None, train=True, diff=False, mix=False, mix2=False):
     if train:
         model.train()
     else:
@@ -197,8 +204,8 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
         # random differentiation step
         # if rand:
-        if random.random() < 0.5:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
+        # if random.random() < 0.5: # do not need random differentiation step for fixed pairs experiments
+        #     video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
 
         # scheduled differentiation step
         if diff:
@@ -212,7 +219,7 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
             video = video[:,:,:,:-1,:,:]
             video[:,0,:,:,:,:] = video_diff[:,0,:,:,:,:]
 
-        lr = adjust_learning_rate(args, optimizer, train_loader, step)
+        lr = adjust_learning_rate(args, config, optimizer, train_loader, step)
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
@@ -221,69 +228,45 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
-        total_loss += loss.mean().item() 
-    
+        total_loss += loss.mean().item()
+
     return total_loss/num_batches
 
-
-def main():
+def tune_hyperparams(config):
     torch.manual_seed(233)
     np.random.seed(233)
 
     args = parser.parse_args()
 
-    torch.backends.cudnn.benchmark = True
     init_distributed_mode(args)
     print(args)
     gpu = torch.device(args.device)
-    
-    model_select = VICCLR
 
-    if args.infonce:
-        ind_name = 'nce'
-    else:
-        ind_name = 'pcn'
+    model_select = VICCLR2S
 
     if args.r21d:
-        model_name = 'r21d18'
-        resnet = models.video.r2plus1d_18()
+        #model_name = 'r21d18'
+        resnet1 = models.video.r2plus1d_18()
+        resnet2 = models.video.r2plus1d_18()
     elif args.mc3:
-        model_name = 'mc318'
-        resnet = models.video.mc3_18()
+        #model_name = 'mc318'
+        resnet1 = models.video.mc3_18()
+        resnet2 = models.video.mc3_18()
     elif args.s3d:
-        model_name = 's3d'
-        resnet = models.video.s3d()
-        resnet.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        #model_name = 's3d'
+        resnet1 = models.video.s3d()
+        resnet1.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        resnet2 = models.video.s3d()
+        resnet2.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
     else:
-        model_name = 'r3d18'
-        resnet = models.video.r3d_18()
+        #model_name = 'r3d18'
+        resnet1 = models.video.r3d_18()
+        resnet2 = models.video.r3d_18()
 
-    if args.k400:
-        dataname = 'k400'
-    elif args.mk200:
-        dataname = 'mk200'
-    elif args.mk400:
-        dataname = 'mk400'
-    elif args.minik:
-        dataname = 'minik'
-    else:
-        dataname = 'ucf'
-
-    ckpt_folder='/home/yehengz/Func-Spec/checkpoints/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
-    
-    # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
-    #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
-
-    if args.rank == 0:
-        if not os.path.exists(ckpt_folder):
-            os.makedirs(ckpt_folder)
-        logging.basicConfig(filename=os.path.join(ckpt_folder, 'net3d_vic_train.log'), level=logging.INFO)
-        logging.info('Started')
-   
 
     model = model_select(
-        resnet,
+        resnet1,
+        resnet2,
         hidden_layer = 'avgpool',
         feature_size = args.feature_size,
         projection_size = args.projection,
@@ -302,10 +285,12 @@ def main():
 
     # optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wd)
     # optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+
+
     optimizer = LARS(
         model.parameters(),
         lr=0,
-        weight_decay=args.wd,
+        weight_decay=config["wd"], # replace args.wd with config["wd"], config is a dictionary that represen the search space;
         weight_decay_filter=exclude_bias_and_norm,
         lars_adaptation_filter=exclude_bias_and_norm,
     )
@@ -316,9 +301,9 @@ def main():
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
 
-    assert args.batch_size % args.world_size == 0
-    
-    per_device_batch_size = args.batch_size // args.world_size
+    assert config["batch_size"] % args.world_size == 0
+
+    per_device_batch_size = config["batch_size"] // args.world_size
     # print(per_device_batch_size)
 
     if args.k400:
@@ -332,131 +317,131 @@ def main():
     else:
         loader_method = get_data_ucf
 
-    train_loader = loader_method(batch_size=per_device_batch_size, 
-                                mode='train', 
-                                transform_consistent=None, 
+    train_loader = loader_method(batch_size=per_device_batch_size,
+                                mode='train',
+                                transform_consistent=None,
                                 transform_inconsistent=default_transform(),
-                                seq_len=args.seq_len, 
-                                num_seq=args.num_seq, 
+                                seq_len=args.seq_len,
+                                num_seq=args.num_seq,
                                 downsample=args.downsample,
                                 random=args.random,
                                 inter_len=args.inter_len,
                                 frame_root=args.frame_root,
                                 ddp=True,
                                 dim=150,
-                                fraction=args.fraction,
-                                )
-    # test_loader = get_data_ucf(batch_size=per_device_batch_size, 
-    #                             mode='val',
-    #                             transform_consistent=None, 
-    #                             transform_inconsistent=default_transform2(),
-    #                             seq_len=args.seq_len, 
-    #                             num_seq=args.num_seq, 
-    #                             downsample=args.downsample,
-    #                             random=args.random,
-    #                             inter_len=args.inter_len,
-    #                             frame_root=args.frame_root,
-    #                             ddp=True,
-    #                             dim = 240,
-    #                             fraction = args.fraction
-    #                             )
-    
-    train_loss_list = []
-    train_loss_list2 = []
-    train_loss_list3 = []
-    train_loss_list4 = []
+                                fraction=0.2,
+                                ) # a smaller train_loader (20% of full)
+
+    # train_loss_list = []
     epoch_list = range(args.start_epoch, args.epochs)
-    lowest_loss = np.inf
-    best_epoch = 0
+    # lowest_loss = np.inf
+    # best_epoch = 0
 
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
 
-        # TODO: differentiation control
-        if i%4 == 0:
-            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        elif i%4 == 1:
-            train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        elif i%4 == 2:
-            train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-        else:
-            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-        
-        # current_time = time.time()
-        if args.rank == 0:
-            if i%4 == 3:
-            # if i%3 == 2:
-            # if i%2 == 1:
-                if train_loss < lowest_loss:
-                    lowest_loss = train_loss
-                    best_epoch = i + 1
+        train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler) #(X, X')
+        #train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix = True) #(X, dX'/dt)
 
-            if i%4 == 0:
-                train_loss_list2.append(train_loss2)
-                print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-                logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-            elif i%4 == 1:
-                train_loss_list3.append(train_loss3)
-                print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-                logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-            elif i%4 == 2:
-                train_loss_list4.append(train_loss4)
-                print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-                logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-            else:
-                train_loss_list.append(train_loss)
-                print('Epoch: %s, Train loss: %s' % (i, train_loss))
-                logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+        train.report({"train_loss": train_loss})
 
-            # j = int(i/4)
-            # if ((j+1)%10 == 0 or j<20) and i%4 == 3:
-            if (i+1)%100 == 0:
-                # save your improved network
-                checkpoint_path = os.path.join(
-                    ckpt_folder, 'resnet_epoch%s.pth.tar' % str(i+1))
-                torch.save(resnet.state_dict(), checkpoint_path)
-                # save whole model and optimizer
-                state = dict(
-                    model=model.state_dict(),
-                    optimizer=optimizer.state_dict(),
-                )
-                checkpoint_path = os.path.join(
-                    ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
-                torch.save(state, checkpoint_path)
+
+
+
+
+
+
+def main():
+    args = parser.parse_args()
+    search_space = {
+      "base_lr": tune.loguniform(1e-6, 1e-1),
+      "wd": tune.uniform(1e-8, 1e-4),
+      "batch_size": tune.choice([64, 128]),
+    }
+    test_search_space = {
+      "base_lr":  tune.choice([1.2, 1.1]),
+      "wd": tune.choice([1e-6]),
+      "batch_size": tune.choice([64]),
+    }
+
+    scheduler = ASHAScheduler(
+        metric="loss",
+        mode="min",
+        grace_period=1,
+        reduction_factor=2,
+    )
+    tuner = tune.Tuner(
+        tune_hyperparams,
+        tune_config = tune.TuneConfig(
+            num_samples=64,
+            scheduler = scheduler
+        ),
+        param_space=test_search_space,
+    )
+
+    results = tuner.fit()
+
+
+    if args.infonce:
+        ind_name = 'nce'
+    else:
+        ind_name = 'pcn'
+
+    if args.r21d:
+        model_name = 'r21d18'
+    elif args.mc3:
+        model_name = 'mc318'
+    elif args.s3d:
+        model_name = 's3d'
+    else:
+        model_name = 'r3d18'
+
+    if args.k400:
+        dataname = 'k400'
+    elif args.mk200:
+        dataname = 'mk200'
+    elif args.mk400:
+        dataname = 'mk400'
+    elif args.minik:
+        dataname = 'minik'
+    else:
+        dataname = 'ucf'
+
+
+    result_folder='/home/yehengz/Func-Spec/hyperparamsTuningResults/%s%s_%s_%s/sym%' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss)
 
     if args.rank == 0:
-        logging.info('Training from ep %d to ep %d finished' %
-            (args.start_epoch, args.epochs))
-        logging.info('Best epoch: %s' % best_epoch)
+        if not os.path.exists(result_folder):
+            os.makedirs(result_folder)
 
-        # save your improved network
-        checkpoint_path = os.path.join(
-            ckpt_folder, 'resnet_epoch%s.pth.tar' % str(args.epochs))
-        torch.save(resnet.state_dict(), checkpoint_path)
-        state = dict(
-                model=model.state_dict(),
-                optimizer=optimizer.state_dict(),
-            )
-        checkpoint_path = os.path.join(
-            ckpt_folder, 'net3d_epoch%s.pth.tar' % str(args.epochs))
-        torch.save(state, checkpoint_path)
+    results_df = results.get_dataframe()
+    results_path = os.path.join(
+        result_folder, "tuning_result.csv"
+    )
+    results_df.to_csv(results_path)
 
+    best_result = results.get_best_result(
+    metric="train_loss", mode="min") # adjust mean_accuracy to train_loss and mode to "min"
+    best_result_df = best_result.metrics_dataframe
+    best_result_path = os.path.join(
+        result_folder, "best_tuning_result.csv"
+    )
+    best_result_df.to_csv(best_result_path) # adjust this path to the path to server
 
-        plot_list = range(args.start_epoch, args.epochs, 4)
-        # plot training process
-        plt.plot(plot_list, train_loss_list, label = 'train')
-        plt.plot(plot_list, train_loss_list2, label = 'train2')
-        plt.plot(plot_list, train_loss_list3, label = 'train3')
-        plt.plot(plot_list, train_loss_list4, label = 'train4')
+    dfs = {result.path: result.metrics_dataframe for result in results}
+    ax = None
+    for d in dfs.values():
+        ax = d.mean_accuracy.plot(ax=ax)
+    ax.set_xlabel("Epoches")
+    ax.set_ylabel("Train Loss")
+    loss_path = os.path.join(
+        result_folder, 'tuning_loss_overview.png'
+    )
+    ax.figure.savefig(loss_path)
 
-        plt.legend()
-        plt.savefig(os.path.join(
-            ckpt_folder, 'epoch%s_bs%s_loss.png' % (args.epochs, args.batch_size)))
+    #torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/hp_tune_net3d_2s.py --sym_loss --epochs 10
 
 
 

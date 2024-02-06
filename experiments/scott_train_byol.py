@@ -299,7 +299,7 @@ def main():
     else:
         dataname = 'ucf'
 
-    ckpt_folder='/home/yehengz/Func-Spec/checkpointsBYOL/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
+    ckpt_folder='/home/yehengz/Func-Spec/checkpointsBYOL/%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
         % (dataname, args.fraction, model_name, args.asym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random) # need to adjust path
     # path need to adjusted to '/home/yehengz/Func-Spec/checkpoints'; change args.sym_loss to args.asym_loss, as the arg input of BYOL changes
 
@@ -428,7 +428,7 @@ def main():
           print('Epoch: %s, Train loss: %s' % (i, train_loss))
           logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
 
-          if i%10 == 0 or i<20:
+          if i%1000 == 0 or i<-1:
           # save your improved network
             checkpoint_path = os.path.join(
                 ckpt_folder, 'resnet_epoch%s.pth.tar' % str(i+1))

@@ -38,8 +38,8 @@ def get_data_minik(transform_consistent=None,
                 return_label=True, 
                 batch_size=16, 
                 dim=150,
-                csv_root='/home/siyich/Datasets/Videos/Kinetics400',
-                frame_root='/home/siyich/Datasets/Videos',
+                csv_root='/home/siyich/Datasets/Videos/Kinetics400', #do not have Kinetics 400 csv for now
+                frame_root='/data/Kinetics400', 
                 ddp=False,
                 random=False,
                 inter_len=0, # num of frames (after downsampling) between two clips
@@ -94,8 +94,8 @@ def get_data_mk400(transform_consistent=None,
                 return_label=True, 
                 batch_size=16, 
                 dim=150,
-                csv_root='/home/siyich/Datasets/Videos/Kinetics400',
-                frame_root='/home/siyich/Datasets/Videos',
+                csv_root='/home/siyich/Datasets/Videos/Kinetics400', # do not have Kinetics400 for now
+                frame_root='/data/Kinetics400',
                 ddp=False,
                 random=False,
                 inter_len=0, # num of frames (after downsampling) between two clips
@@ -150,8 +150,8 @@ def get_data_mk200(transform_consistent=None,
                 return_label=True, 
                 batch_size=16, 
                 dim=150,
-                csv_root='/home/siyich/Datasets/Videos/Kinetics400',
-                frame_root='/home/siyich/Datasets/Videos',
+                csv_root='/home/siyich/Datasets/Videos/Kinetics400', #do not have Kinetcis400 csv for now
+                frame_root='/data/Kinetics400',
                 ddp=False,
                 random=False,
                 inter_len=0, # num of frames (after downsampling) between two clips
@@ -207,7 +207,7 @@ def get_data_k400(transform_consistent=None,
                 batch_size=16, 
                 dim=150,
                 csv_root='/home/siyich/Datasets/Videos/Kinetics400',
-                frame_root='/home/siyich/Datasets/Videos',
+                frame_root='/data/Kinetics400',
                 ddp=False,
                 random=False,
                 inter_len=0, # num of frames (after downsampling) between two clips
@@ -263,8 +263,8 @@ def get_data_ucf(transform_consistent=None,
                 return_label=True, 
                 batch_size=16, 
                 dim=150,
-                csv_root='/home/siyich/byol-pytorch/data_video',
-                frame_root='/home/siyich/Datasets/Videos',
+                csv_root='/home/yehengz/byol-pytorch/data_video',
+                frame_root='/data/UCF101',
                 ddp=False,
                 random=False,
                 inter_len=0, # num of frames (after downsampling) between two clips
@@ -309,6 +309,120 @@ def get_data_ucf(transform_consistent=None,
     print('"%s" dataset size: %d' % (mode, len(dataset)))
     return data_loader
 
+def get_data_ucf_partial(transform_consistent=None,
+                transform_inconsistent=None,
+                mode='train', 
+                seq_len=4, 
+                num_seq=3, 
+                downsample=8, 
+                which_split=1, 
+                return_label=True, 
+                batch_size=16, 
+                dim=150,
+                csv_root='/home/yehengz/byol-pytorch/data_video',
+                frame_root='/data/UCF101',
+                ddp=False,
+                random=False,
+                inter_len=0, # num of frames (after downsampling) between two clips
+                fraction=1.0
+                ):
+    print('Loading data for "%s" ...' % mode)
+    dataset = UCF101(mode=mode,
+                        transform_consistent=transform_consistent,
+                        transform_inconsistent=transform_inconsistent,
+                        seq_len=seq_len,
+                        num_seq=num_seq,
+                        downsample=downsample,
+                        which_split=which_split,
+                        return_label=return_label,
+                        dim=dim,
+                        csv_root=csv_root,
+                        frame_root=frame_root,
+                        random=random,
+                        inter_len=inter_len
+                        )
+    if not ddp:
+        sampler = data.RandomSampler(dataset, num_samples= int(fraction*len(dataset)))
+    else:
+        sampler = data.distributed.DistributedSampler(dataset, shuffle=True)
+
+    if mode == 'train':
+        data_loader = data.DataLoader(dataset,
+                                      batch_size=batch_size,
+                                      sampler=sampler,
+                                      shuffle=False,
+                                      num_workers=128,
+                                      pin_memory=True,
+                                      drop_last=True)
+    else:
+        data_loader = data.DataLoader(dataset,
+                                      batch_size=batch_size,
+                                      sampler=sampler,
+                                      shuffle=False,
+                                      num_workers=128,
+                                      pin_memory=True,
+                                      drop_last=True)
+    print('"%s" dataset size: %d' % (mode, int(fraction*len(dataset))))
+    return data_loader
+
+def get_data_ucf_rand_derivative(transform_consistent=None,
+                transform_inconsistent=None,
+                mode='train', 
+                seq_len=4, 
+                num_seq=3, 
+                downsample=8, 
+                which_split=1, 
+                return_label=True, 
+                batch_size=16, 
+                dim=150,
+                csv_root='/home/yehengz/byol-pytorch/data_video',
+                frame_root='/data/UCF101',
+                ddp=False,
+                random=False,
+                prob = 0.5,
+                inter_len=0, # num of frames (after downsampling) between two clips
+                fraction=1.0
+                ):
+    print('Loading data for "%s" ...' % mode)
+    dataset = UCF101RandDerivative(mode=mode,
+                        transform_consistent=transform_consistent,
+                        transform_inconsistent=transform_inconsistent,
+                        seq_len=seq_len,
+                        num_seq=num_seq,
+                        downsample=downsample,
+                        which_split=which_split,
+                        return_label=return_label,
+                        dim=dim,
+                        csv_root=csv_root,
+                        frame_root=frame_root,
+                        random=random,
+                        prob = prob,
+                        inter_len=inter_len
+                        )
+    if not ddp:
+        sampler = data.RandomSampler(dataset)
+    else:
+        sampler = data.distributed.DistributedSampler(dataset, shuffle=True)
+
+    if mode == 'train':
+        data_loader = data.DataLoader(dataset,
+                                      batch_size=batch_size,
+                                      sampler=sampler,
+                                      shuffle=False,
+                                      num_workers=128,
+                                      pin_memory=True,
+                                      drop_last=True)
+    else:
+        data_loader = data.DataLoader(dataset,
+                                      batch_size=batch_size,
+                                      sampler=sampler,
+                                      shuffle=False,
+                                      num_workers=128,
+                                      pin_memory=True,
+                                      drop_last=True)
+    print('"%s" dataset size: %d' % (mode, len(dataset)))
+    return data_loader
+
 
 class UCF101(data.Dataset):
     def __init__(self,
@@ -321,8 +435,8 @@ class UCF101(data.Dataset):
                 which_split=1,
                 return_label=False,
                 dim=150,
-                csv_root='/home/siyich/byol-pytorch/data_video',
-                frame_root='/home/siyich/Datasets/Videos',
+                csv_root='/home/yehengz/byol-pytorch/data_video',
+                frame_root='/data/UCF101',
                 random=False,
                 inter_len:int=0 # num of frames (after downsampling) between two clips
                 ):
@@ -435,7 +549,138 @@ class UCF101(data.Dataset):
     def __len__(self):
         return len(self.video_info)
     
+class UCF101RandDerivative(data.Dataset):
+    def __init__(self,
+                mode='train',
+                transform_consistent=None,
+                transform_inconsistent=None,
+                seq_len:int=4,
+                num_seq:int=3,
+                downsample:int=4,
+                which_split=1,
+                return_label=False,
+                dim=150,
+                csv_root='/home/yehengz/byol-pytorch/data_video',
+                frame_root='/data/UCF101',
+                random=False,
+                prob = 0.5,
+                inter_len:int=0 # num of frames (after downsampling) between two clips
+                ):
+        self.mode = mode
+        self.transform_consistent = transform_consistent
+        self.transform_inconsistent = transform_inconsistent
+        self.seq_len=seq_len
+        self.num_seq = num_seq
+        self.downsample = downsample
+        self.which_split = which_split
+        self.return_label = return_label
+        self.dim = dim
+        self.csv_root = csv_root
+        self.frame_root = frame_root
+        self.random = random
+        self.prob = prob
+        self.inter_len = inter_len
+        self.total_len = ((self.seq_len + self.inter_len)*self.num_seq - self.inter_len)*self.downsample
+        
+        begin_idxs = np.arange(self.num_seq)*self.downsample*(self.seq_len+self.inter_len) 
+        inter_idxs = (np.arange(self.seq_len)*self.downsample).reshape(-1,1)
+        self.base_seq_idx = (inter_idxs + begin_idxs).T.flatten()
 
+        if dim == 150:
+            folder_name = 'ucf101_150'
+        else:
+            folder_name = 'ucf101_240'
+        
+        if prob > 1 or prob < 0:
+            raise ValueError('Invalid value of probability')
+
+        # splits
+        if mode == 'train':
+            if self.which_split == 0:
+                split = os.path.join(self.csv_root, folder_name, 'train.csv')
+            else:
+                split = os.path.join(self.csv_root, folder_name, 'train_split%02d.csv' % self.which_split)
+            video_info = pd.read_csv(split, header=None)
+        elif (mode == 'val') or (mode == 'test'): # use val for test
+            if self.which_split == 0:
+                split = os.path.join(self.csv_root, folder_name, 'test.csv')
+            else:
+                split = os.path.join(self.csv_root, folder_name, 'test_split%02d.csv' % self.which_split)
+            video_info = pd.read_csv(split, header=None)
+        else: raise ValueError('wrong mode')
+
+        # filter out too short videos:
+        drop_idx = []
+        for idx, row in video_info.iterrows():
+            _, vlen, _ = row
+
+            if vlen-self.total_len <= 0 and not self.random:
+                drop_idx.append(idx)
+            if vlen-self.seq_len*self.downsample <= 0 and self.random:
+                drop_idx.append(idx)
+
+        self.video_info = video_info.drop(drop_idx, axis=0)
+        print("Droped number of videos:", len(drop_idx))
+
+        if mode == 'val': self.video_info = self.video_info.sample(frac=0.3)
+        # shuffle not required due to external sampler
+
+    def idx_sampler(self, vlen, vpath):
+        '''sample index from a video'''
+        
+        # if vlen-self.total_len <= 0: raise ValueError('video too short')
+        if not self.random:
+            n = 1
+            start_idx = np.random.choice(range(vlen-self.total_len), n)
+            seq_idx = self.base_seq_idx + start_idx
+
+            # seq_idx = np.arange(self.seq_len*self.num_seq)*self.downsample + start_idx
+        else:
+            # each clip is selected randomly without ordering
+            n = self.num_seq
+            begin_idxs = np.random.choice(range(vlen-self.seq_len*self.downsample), n) 
+            inter_idxs = (np.arange(self.seq_len)*self.downsample).reshape(-1,1)
+            seq_idx = (inter_idxs + begin_idxs).T.flatten()
+
+
+        return [seq_idx, vpath]
+
+
+    def __getitem__(self, index):
+        # return seq, seq_derivative, label(optional)
+        vpath, vlen, aid = self.video_info.iloc[index]
+        items = self.idx_sampler(vlen, vpath)
+        if items is None: print(vpath) 
+        
+        idx_block, vpath = items
+        
+        seq = [pil_loader(os.path.join(self.frame_root, vpath, 'image_%05d.jpg' % (i+1))) for i in idx_block]
+
+        if self.transform_consistent is not None: 
+                seq = self.transform_consistent(seq) # apply same transform
+
+        if self.transform_inconsistent is not None: 
+            for i in range(self.num_seq):
+                sub_seq = self.transform_inconsistent(seq[i*self.seq_len:(i+1)*self.seq_len])
+                seq[i*self.seq_len:(i+1)*self.seq_len] = sub_seq
+                
+
+        (C, H, W) = seq[0].size()
+        seq = torch.stack(seq, 0)
+        seq = seq.view(self.num_seq, self.seq_len, C, H, W) # N, T, C, H, W
+        seq = seq.permute(0,2,1,3,4) # N, C, T, H, W
+        # seq = seq.view(self.num_seq*self.seq_len, C, H, W) # N*T, C, H, W
+        # seq = seq.permute(1,0,2,3) # C, N*T, H, W
+        if random.random() < self.prob:
+            seq_derivative = seq[:, :, 1:, :, :] - seq[:, :, :-1, :, :] # shape becomes N, C, T-1, H, W
+        
+        if self.return_label:
+            label = torch.LongTensor([aid])
+            return seq[:, :, :-1, :, :], seq_derivative, label # To make the shape consistent, drop the last frame
+        return seq[:, :, :-1, :, :], seq_derivative # to make the shape consistent, drop the last frame
+
+    def __len__(self):
+        return len(self.video_info)
 
 # TODO
 class Kinetics400(data.Dataset):
@@ -449,7 +694,7 @@ class Kinetics400(data.Dataset):
                 return_label=False,
                 dim=150,
                 csv_root='/home/siyich/Datasets/Videos/Kinetics400',
-                frame_root='/home/siyich/Datasets/Videos',
+                frame_root='/data/Kinetics400',
                 random=False,
                 inter_len:int=0, # num of frames (after downsampling) between two clips
                 fraction=1.0
@@ -585,7 +830,7 @@ class MiniK200(data.Dataset):
                 return_label=False,
                 dim=150,
                 csv_root='/home/siyich/Datasets/Videos/Kinetics400',
-                frame_root='/home/siyich/Datasets/Videos',
+                frame_root='/data/UCF101',
                 random=False,
                 inter_len:int=0, # num of frames (after downsampling) between two clips
                 fraction=1.0
@@ -720,7 +965,7 @@ class MiniK400(data.Dataset):
                 return_label=False,
                 dim=150,
                 csv_root='/home/siyich/Datasets/Videos/Kinetics400',
-                frame_root='/home/siyich/Datasets/Videos',
+                frame_root='/data/Kinetics400',
                 random=False,
                 inter_len:int=0, # num of frames (after downsampling) between two clips
                 fraction=1.0
@@ -855,7 +1100,7 @@ class MiniK(data.Dataset):
                 return_label=False,
                 dim=150,
                 csv_root='/home/siyich/Datasets/Videos/Kinetics400',
-                frame_root='/home/siyich/Datasets/Videos',
+                frame_root='/data/Kinetics400',
                 random=False,
                 inter_len:int=0, # num of frames (after downsampling) between two clips
                 fraction=1.0

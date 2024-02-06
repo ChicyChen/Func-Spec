@@ -36,13 +36,18 @@ from distributed_utils import init_distributed_mode
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --sym_loss --epochs 12
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --epochs 400 --batch_size 64 --sym_loss --base_lr 4.8 --projection 2048 --proj_hidden 2048 --pred_layer 0 --proj_layer 3 --cov_l 0.04 --std_l 1.0 --spa_l 0.0
 
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_fixed_pair.py --sym_loss --epochs 400
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_fixed_pair.py --sym_loss --epochs 400 --which_fixed_pair 1 
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_fixed_pair.py --sym_loss --infonce --epochs 400 
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_fixed_pair.py --sym_loss --infonce --epochs 400 --which_fixed_pair 1
+# --which_pair default is 0, 0 for 00, 1 fo 01 (index of order of derivative)
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--frame_root', default='/data', type=str,
                     help='root folder to store data like UCF101/..., better to put in servers SSD \
                     default path is mounted from data server for the home directory')
 # --frame_root /data
-                    
+
 parser.add_argument('--gpu', default='0,1,2,3,4,5,6,7', type=str)
 
 parser.add_argument('--epochs', default=400, type=int,
@@ -74,10 +79,10 @@ parser.add_argument('--proj_layer', default=3, type=int)
 
 parser.add_argument('--mse_l', default=1.0, type=float)
 parser.add_argument('--std_l', default=1.0, type=float)
-parser.add_argument('--cov_l', default=0.04, type=float)
+parser.add_argument('--cov_l', default=0.05, type=float)
 parser.add_argument('--infonce', action='store_true')
 
-parser.add_argument('--base_lr', default=4.8, type=float)
+parser.add_argument('--base_lr', default=1.2, type=float)
 
 # Running
 parser.add_argument("--num-workers", type=int, default=128)
@@ -100,6 +105,8 @@ parser.add_argument('--mk400', action='store_true')
 parser.add_argument('--minik', action='store_true')
 parser.add_argument('--k400', action='store_true')
 parser.add_argument('--fraction', default=1.0, type=float)
+
+parser.add_argument('--which_fixed_pair', default = 0, type = int)
 
 
 def adjust_learning_rate(args, optimizer, loader, step):
@@ -197,7 +204,7 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
         # random differentiation step
         # if rand:
-        if random.random() < 0.5:
+        if random.random() < 0.5: # should it be removed?
             video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
 
         # scheduled differentiation step
@@ -211,6 +218,7 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
             video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
             video = video[:,:,:,:-1,:,:]
             video[:,0,:,:,:,:] = video_diff[:,0,:,:,:,:]
+        # to obtain pair (C, dC'2/dc). Should we define: diff = True, mix = True, or should we do operations in mix twice?
 
         lr = adjust_learning_rate(args, optimizer, train_loader, step)
 
@@ -221,8 +229,8 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
-        total_loss += loss.mean().item() 
-    
+        total_loss += loss.mean().item()
+
     return total_loss/num_batches
 
 
@@ -236,13 +244,18 @@ def main():
     init_distributed_mode(args)
     print(args)
     gpu = torch.device(args.device)
-    
+
     model_select = VICCLR
 
     if args.infonce:
         ind_name = 'nce'
     else:
         ind_name = 'pcn'
+
+    if args.which_fixed_pair == 0:
+        fixed_pair = "00DerivativePair"
+    else:
+        fixed_pair = "01DerivativePair"
 
     if args.r21d:
         model_name = 'r21d18'
@@ -269,9 +282,9 @@ def main():
     else:
         dataname = 'ucf'
 
-    ckpt_folder='/home/yehengz/Func-Spec/checkpoints/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
-    
+    ckpt_folder='/home/yehengz/Func-Spec/checkpoints/fixedPair/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_fixed_pair%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, fixed_pair)
+
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
 
@@ -280,7 +293,7 @@ def main():
             os.makedirs(ckpt_folder)
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'net3d_vic_train.log'), level=logging.INFO)
         logging.info('Started')
-   
+
 
     model = model_select(
         resnet,
@@ -317,7 +330,7 @@ def main():
         optimizer.load_state_dict(ckpt["optimizer"])
 
     assert args.batch_size % args.world_size == 0
-    
+
     per_device_batch_size = args.batch_size // args.world_size
     # print(per_device_batch_size)
 
@@ -332,12 +345,12 @@ def main():
     else:
         loader_method = get_data_ucf
 
-    train_loader = loader_method(batch_size=per_device_batch_size, 
-                                mode='train', 
-                                transform_consistent=None, 
+    train_loader = loader_method(batch_size=per_device_batch_size,
+                                mode='train',
+                                transform_consistent=None,
                                 transform_inconsistent=default_transform(),
-                                seq_len=args.seq_len, 
-                                num_seq=args.num_seq, 
+                                seq_len=args.seq_len,
+                                num_seq=args.num_seq,
                                 downsample=args.downsample,
                                 random=args.random,
                                 inter_len=args.inter_len,
@@ -346,12 +359,12 @@ def main():
                                 dim=150,
                                 fraction=args.fraction,
                                 )
-    # test_loader = get_data_ucf(batch_size=per_device_batch_size, 
+    # test_loader = get_data_ucf(batch_size=per_device_batch_size,
     #                             mode='val',
-    #                             transform_consistent=None, 
+    #                             transform_consistent=None,
     #                             transform_inconsistent=default_transform2(),
-    #                             seq_len=args.seq_len, 
-    #                             num_seq=args.num_seq, 
+    #                             seq_len=args.seq_len,
+    #                             num_seq=args.num_seq,
     #                             downsample=args.downsample,
     #                             random=args.random,
     #                             inter_len=args.inter_len,
@@ -360,11 +373,11 @@ def main():
     #                             dim = 240,
     #                             fraction = args.fraction
     #                             )
-    
+
     train_loss_list = []
-    train_loss_list2 = []
-    train_loss_list3 = []
-    train_loss_list4 = []
+    # train_loss_list2 = []
+    # train_loss_list3 = []
+    # train_loss_list4 = []
     epoch_list = range(args.start_epoch, args.epochs)
     lowest_loss = np.inf
     best_epoch = 0
@@ -373,48 +386,56 @@ def main():
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
 
-        # TODO: differentiation control
-        if i%4 == 0:
-            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        elif i%4 == 1:
-            train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        elif i%4 == 2:
-            train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-        else:
+        # # TODO: differentiation control
+        # if i%4 == 0:
+        #     # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
+        #     train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+        # elif i%4 == 1:
+        #     # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
+        #     train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
+        # elif i%4 == 2:
+        #     # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
+        #     train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
+        # else:
+        #     # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+        #     train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
+        if args.which_fixed_pair == 0:
             train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-        
+        else:
+            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix = True)
         # current_time = time.time()
         if args.rank == 0:
-            if i%4 == 3:
-            # if i%3 == 2:
-            # if i%2 == 1:
-                if train_loss < lowest_loss:
+            # if i%4 == 3:
+            # # if i%3 == 2:
+            # # if i%2 == 1:
+            #     if train_loss < lowest_loss:
+            #         lowest_loss = train_loss
+            #         best_epoch = i + 1
+            if train_loss < lowest_loss:
                     lowest_loss = train_loss
                     best_epoch = i + 1
 
-            if i%4 == 0:
-                train_loss_list2.append(train_loss2)
-                print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-                logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-            elif i%4 == 1:
-                train_loss_list3.append(train_loss3)
-                print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-                logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-            elif i%4 == 2:
-                train_loss_list4.append(train_loss4)
-                print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-                logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-            else:
-                train_loss_list.append(train_loss)
-                print('Epoch: %s, Train loss: %s' % (i, train_loss))
-                logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+            # if i%4 == 0:
+            #     train_loss_list2.append(train_loss2)
+            #     print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
+            #     logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
+            # elif i%4 == 1:
+            #     train_loss_list3.append(train_loss3)
+            #     print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
+            #     logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
+            # elif i%4 == 2:
+            #     train_loss_list4.append(train_loss4)
+            #     print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
+            #     logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
+            # else:
+            #     train_loss_list.append(train_loss)
+            #     print('Epoch: %s, Train loss: %s' % (i, train_loss))
+            #     logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+            train_loss_list.append(train_loss)
+            print('Epoch: %s, Train loss: %s' % (i, train_loss))
+            logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
 
-            # j = int(i/4)
-            # if ((j+1)%10 == 0 or j<20) and i%4 == 3:
+            
             if (i+1)%100 == 0:
                 # save your improved network
                 checkpoint_path = os.path.join(
@@ -447,12 +468,12 @@ def main():
         torch.save(state, checkpoint_path)
 
 
-        plot_list = range(args.start_epoch, args.epochs, 4)
+        plot_list = range(args.start_epoch, args.epochs)
         # plot training process
         plt.plot(plot_list, train_loss_list, label = 'train')
-        plt.plot(plot_list, train_loss_list2, label = 'train2')
-        plt.plot(plot_list, train_loss_list3, label = 'train3')
-        plt.plot(plot_list, train_loss_list4, label = 'train4')
+        # plt.plot(plot_list, train_loss_list2, label = 'train2')
+        # plt.plot(plot_list, train_loss_list3, label = 'train3')
+        # plt.plot(plot_list, train_loss_list4, label = 'train4')
 
         plt.legend()
         plt.savefig(os.path.join(

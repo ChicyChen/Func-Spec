@@ -70,11 +70,9 @@ parser.add_argument('--mc3', action='store_true') # default is False
 parser.add_argument('--s3d', action='store_true') # default is False
 
 
-parser.add_argument('--diff', action='store_true') # default is False
+parser.add_argument('--concat', action='store_true') # default is False, meaning averageing features from two encoders
 
 parser.add_argument('--seed', default = 233, type = int) # seed used during training
-parser.add_argument('--which_encoder', default = 1, type = int) # default is 1, the only other option is 2
-
 # python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400
 # python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --which_encoder 2
 # python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400
@@ -91,8 +89,9 @@ def test_transform():
     return transform
 
 
-def extract_features(loader, model, test=True, diff=False):
-    model.eval()
+def extract_features(loader, model1, model2, test=True, concat = False):
+    model1.eval()
+    model2.eval()
 
     features = []
     label_lst = []
@@ -109,27 +108,29 @@ def extract_features(loader, model, test=True, diff=False):
             input_tensor_diff = input_tensor[:,:,:,1:,:,:] - input_tensor[:,:,:,:-1,:,:] # dX/dt, T = T-1
             print("The shape of input_tensor_diff is: ", input_tensor_diff.shape)
 
-            h = model(input_tensor.view(B*N, C, T, H, W))
-            h_diff = model(input_tensor_diff.view(B*N, C, T-1, H, W))
+            h1 = model1(input_tensor.view(B*N, C, T, H, W))
+            h2 = model2(input_tensor.view(B*N, C, T, H, W))
             # # kind 1
             if test:
-                h = h.reshape(B, N, -1) # B, N, D
-                h_diff = h_diff.reshape(B, N, -1)
-                if not diff:
-                    print("0")
+                h1 = h1.reshape(B, N, -1) # B, N, D
+                h2 = h2.reshape(B, N, -1)
+                if not concat:
+                    print("average E1 and E2")
+                    h = (h1+h2)/2
                     features.append(h)
                 else:
-                    print("1")
-                    features.append(torch.cat((h, h_diff), -1))
+                    print("concat E1 and E2")
+                    features.append(torch.cat((h1, h2), -1))
                 label_lst.append(label)
             # kind 2
             else:
-                if not diff:
-                    print("0")
+                if not concat:
+                    print("average E1 and E2")
+                    h = (h1+h2)/2
                     features.append(h)
                 else:
-                    print("1")
-                    features.append(torch.cat((h, h_diff), -1))
+                    print("concat E1 and E2")
+                    features.append(torch.cat((h1, h2), -1))
                 label_lst.append(torch.ones(B,N)*label)
 
             i += 1
@@ -150,14 +151,15 @@ def extract_features(loader, model, test=True, diff=False):
     return h_total, label_total
 
 
-def perform_knn(model, train_loader, test_loader, k=1, diff=False):
-    model.eval()
+def perform_knn(model1, model2, train_loader, test_loader, k=1, concat=False):
+    model1.eval()
+    model2.eval()
 
-    ssl_evaluator = Retrieval(model=model, k=k, device=cuda, num_seq=args.num_seq)
-    h_train, l_train = extract_features(train_loader, model, diff=diff)
+    ssl_evaluator = Retrieval2Encoders(model1=model1, model2=model2, k=k, device=cuda, num_seq=args.num_seq)
+    h_train, l_train = extract_features(train_loader, model1, model2, concat=concat)
 
     train_acc = ssl_evaluator.knn(h_train, l_train, k=1)
-    h_test, l_test = extract_features(test_loader, model, diff=diff)
+    h_test, l_test = extract_features(test_loader, model1, model2, concat=concat)
     acc1, acc5, acc10  = ssl_evaluator.eval(h_test, l_test, l_train)
 
     # train_acc, val_acc = ssl_evaluator.fit(train_loader, test_loader)
@@ -179,19 +181,25 @@ def main():
     args = parser.parse_args()
 
     ckpt_folder = args.ckpt_folder
-    if args.which_encoder == 1:
-        ckpt_path = os.path.join(ckpt_folder, 'resnet1_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
-    elif args.which_encoder == 2:
-        ckpt_path = os.path.join(ckpt_folder, 'resnet2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+    ckpt_path1 = os.path.join(ckpt_folder, 'resnet1_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+    ckpt_path2 = os.path.join(ckpt_folder, 'resnet2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
 
     if not args.hmdb:
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'ucf_retrieval.log'), level=logging.INFO)
     else:
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'hmdb_knn.log'), level=logging.INFO)
     logging.info('Started')
-    
+    logging.info('Test when using features from both encoders')
+
+    if not args.concat:
+        logging.info('Average features from two encoders')
+    else:
+        logging.info('Concatenate features from two encoders')
+        
     if not args.random:
-        logging.info(ckpt_path)
+        logging.info(ckpt_path1)
+        logging.info(ckpt_path2)
+
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     global cuda
@@ -201,28 +209,37 @@ def main():
     if args.r21d:
         model_name = 'r21d18'
         if not args.kinetics:
-            resnet = models.video.r2plus1d_18()
+            resnet1 = models.video.r2plus1d_18()
+            resnet2 = models.video.r2plus1d_18()
         else:
-            resnet = models.video.r2plus1d_18(pretrained=True)
+            resnet1 = models.video.r2plus1d_18(pretrained=True)
+            resnet2 = models.video.r2plus1d_18(pretrained=True)
     elif args.mc3:
         model_name = 'mc318'
         if not args.kinetics:
-            resnet = models.video.mc3_18()
+            resnet1 = models.video.mc3_18()
+            resnet2 = models.video.mc3_18()
         else:
-            resnet = models.video.mc3_18(pretrained=True)
+            resnet1 = models.video.mc3_18(pretrained=True)
+            resnet2 = models.video.mc3_18(pretrained=True)
     elif args.s3d:
         model_name = 's3d'
         if not args.kinetics:
-            resnet = models.video.s3d()
+            resnet1 = models.video.s3d()
+            resnet2 = models.video.s3d()
         else:
-            resnet = models.video.s3d(pretrained=True)
-        resnet.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+            resnet1 = models.video.s3d(pretrained=True)
+            resnet2 = models.video.s3d(pretrained=True)
+        resnet1.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        resnet2.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
     else:
         model_name = 'r3d18'
         if not args.kinetics:
-            resnet = models.video.r3d_18()
+            resnet1 = models.video.r3d_18()
+            resnet2 = models.video.r3d_18()
         else:
-            resnet = models.video.r3d_18(pretrained=True)
+            resnet1 = models.video.r3d_18(pretrained=True)
+            resnet2 = models.video.r3d_18(pretrained=True)
 
     # if not args.kinetics:
     #     resnet = models.video.r3d_18()
@@ -234,12 +251,17 @@ def main():
     #     # resnet.layer4[1].conv2[0] = torch.nn.Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
 
     if not args.random and not args.kinetics:
-        resnet.load_state_dict(torch.load(ckpt_path)) # load model
-    resnet.fc = torch.nn.Identity()
+        resnet1.load_state_dict(torch.load(ckpt_path1)) # load model1
+        resnet2.load_state_dict(torch.load(ckpt_path2)) # load model2
+    resnet1.fc = torch.nn.Identity()
+    resnet2.fc = torch.nn.Identity()
 
-    resnet = nn.DataParallel(resnet)
-    resnet = resnet.to(cuda)
-    resnet.eval()
+    resnet1 = nn.DataParallel(resnet1)
+    resnet2 = nn.DataParallel(resnet2)
+    resnet1 = resnet1.to(cuda)
+    resnet2 = resnet2.to(cuda)
+    resnet1.eval()
+    resnet2.eval()
 
     if args.img_size == 224:
         dim = 240
@@ -306,17 +328,24 @@ def main():
     # random weight
     if args.random:
         logging.info(f"k-nn accuracy performed with random weight\n")
-        perform_knn(resnet, train_loader, test_loader, args.k, args.diff)
+        perform_knn(resnet1, resnet2, train_loader, test_loader, args.k, args.concat)
     elif args.kinetics:
         logging.info(f"k-nn accuracy performed with kinetics weight\n")
-        perform_knn(resnet, train_loader, test_loader, args.k, args.diff)
+        perform_knn(resnet1,resnet2, train_loader, test_loader, args.k, args.concat)
     else:
         # after training
         logging.info(f"k-nn accuracy performed after ssl\n")
-        perform_knn(resnet, train_loader, test_loader, args.k, args.diff)
+        perform_knn(resnet1, resnet2, train_loader, test_loader, args.k, args.concat)
 
 
 
 
 if __name__ == '__main__':
     main()
+
+# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400
+# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --concat
+# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400
+# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --concat
+# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400
+# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --concat
