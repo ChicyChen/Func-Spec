@@ -8,7 +8,7 @@ sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 
-from vicclr2s import VICCLR2S
+from vicclr2srd import VICCLR2SRD
 
 import random
 import math
@@ -19,7 +19,7 @@ from torchvision import models
 from torchvision import transforms as T
 import torch.nn.functional as F
 
-from dataloader import get_data_ucf, get_data_k400, get_data_mk200, get_data_mk400, get_data_minik
+from dataloader import get_data_ucf, get_data_k400, get_data_mk200, get_data_mk400, get_data_minik, get_data_ucf_rand_derivative
 from torch.utils.data import DataLoader
 
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -197,9 +197,10 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
         # TODO: be careful with video size
         # N = 2 by default
-        video, label = data # B, N, C, T, H, W
+        video, video_rand_derivative, label = data # B, N, C, T, H, W
         label = label.to(gpu)
         video = video.to(gpu)
+        video_rand_derivative.to(gpu)
 
         # random differentiation step
         # if rand:
@@ -222,7 +223,7 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
-            loss = model(video)
+            loss = model(video, video_rand_derivative)
             if train:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -244,7 +245,7 @@ def main():
     print(args)
     gpu = torch.device(args.device)
 
-    model_select = VICCLR2S
+    model_select = VICCLR2SRD
 
     if args.infonce:
         ind_name = 'nce2s'
@@ -279,7 +280,7 @@ def main():
     elif args.minik:
         dataname = 'minik'
     else:
-        dataname = 'ucf'
+        dataname = 'ucf_rd'
     
     if args.concat:
         operation = "_concatenation"
@@ -288,7 +289,7 @@ def main():
         operation = "_summation"
         print('We are using summation')
 
-    ckpt_folder='/data/checkpoints_yehengz/2streams/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s' \
+    ckpt_folder='/data/checkpoints_yehengz/2streams_rand_derivative/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s' \
         % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.seed, operation)
 
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
@@ -351,7 +352,7 @@ def main():
     elif args.minik:
         loader_method = get_data_minik
     else:
-        loader_method = get_data_ucf
+        loader_method = get_data_ucf_rand_derivative
 
     train_loader = loader_method(batch_size=per_device_batch_size,
                                 mode='train',
@@ -393,7 +394,6 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
-        
         # # TODO: differentiation control
         # if i%4 == 0:
         #     # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
@@ -521,3 +521,10 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233 --concat
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 42
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 42 --concat    
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 3407
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 3407 --concat   

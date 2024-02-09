@@ -674,11 +674,22 @@ class UCF101RandDerivative(data.Dataset):
         if random.random() < self.prob:
             seq_derivative = seq[:, :, 1:, :, :] - seq[:, :, :-1, :, :] # shape becomes N, C, T-1, H, W
         
-        if self.return_label:
-            label = torch.LongTensor([aid])
-            return seq[:, :, :-1, :, :], seq_derivative, label # To make the shape consistent, drop the last frame
-        return seq[:, :, :-1, :, :], seq_derivative # to make the shape consistent, drop the last frame
-
+            if self.return_label:
+                label = torch.LongTensor([aid])
+                return seq[:, :, :-1, :, :], seq_derivative, label # To make the shape consistent, drop the last frame
+            else:
+                return seq[:, :, :-1, :, :], seq_derivative # to make the shape consistent, drop the last frame
+        else:
+            if self.return_label:
+                label = torch.LongTensor([aid])
+                return seq[:, :, :-1, :, :], seq[:, :, :-1, :, :], label
+            else:
+                return seq[:, :, :-1, :, :], seq[:, :, :-1, :, :]
+        
+        # in this case, with prob = 0.5, __getitem__ returns [seq, seq_derivative, label(optional)]
+        # with another prob = 0.5, __getitem__ returns [seq, seq, label(optional)]
+        # in this case, the first element will always be seq and the second element have a prob = 0.5 to be derivative,
+        # a prob = 0.5 to be the the original seq. We feed the first element to encoder 2 and second element to encoder1
     def __len__(self):
         return len(self.video_info)
 

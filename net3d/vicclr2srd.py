@@ -85,13 +85,15 @@ class VICCLR2SRD(nn.Module):
         video, # video.shape = B, N, C, T-1, H, W
         video_rand_derivative # video.shape = B, N, C, T-1, H, W
     ):
+        # print("The shape of video input is: ", video.shape)
+        # print("The shape pf video_rand_derivative input is: ", video_rand_derivative.shape)
         assert not (self.training and video.shape[0] == 1), 'you must have greater than 1 sample when training, due to the batchnorm in the projection layer'
-        assert not (video.shape == video_rand_derivative.shape), 'The shape of video input and video_derivative input must be the same'
+        assert (video.shape == video_rand_derivative.shape), 'The shape of video input and video_derivative input must be the same'
 
         B, N, C, T, H, W = video.size()
         # x1 = x[:,0,:,:,:,:] # x1 shape is B, 1, C, T, H, W; x1 is the frame images with first data augmentation process
         # x2 = x[:,1,:,:,:,:] # x2 shape is B, 1, C, T, H, W; x2 is the frame images with second data augmentation process
-
+        
         # ground truth latents
         hidden1 = flatten(self.encoder1(video_rand_derivative.view(B*N, C, T, H, W))) # encoder1 forward
         hidden2 = flatten(self.encoder2(video.view(B*N, C, T, H, W))) # encoder2 forward

@@ -95,13 +95,17 @@ class VICCLR2S(nn.Module): # DE for double encoder
         gt_z_all2 = self.projector2(hidden2) # projector2 forward for output of encoder2
         gt_z_all1 = gt_z_all1.reshape(B, N, -1) # B, N, D
         gt_z_all2 = gt_z_all2.reshape(B, N, -1) # B, N, D
+        # print("shape of gt_z_all is: ", gt_z_all1.shape)
 
         if self.concat:
+            # print("Concatenation")
             gt_z_all_concat = torch.cat((gt_z_all1, gt_z_all2), dim=-1) # B, N, 2*D
+            # print("shape of gt_z_all after concatenation is: ", gt_z_all_concat.shape)
             z1 = gt_z_all_concat[:, :-1, :]
             z2 = gt_z_all_concat[:, 1:, :]
 
         else: #sum
+            # print("Summation")
             z1 = gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
             z2 = gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
             

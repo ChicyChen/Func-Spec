@@ -82,7 +82,7 @@ def extract_features(loader, model, test=True):
         for data_i in loader:
             # B, N, C, T, H, W
             im1, im2, label= data_i
-            print("++++++++++Shape of label is: ", label.shape)
+            #print("++++++++++Shape of label is: ", label.shape)
             #im1 and im2 are in shape [B,C,H,W], lable has a shape of [64]
             im1 = torch.unsqueeze(im1, dim = 1)
             im2 = torch.unsqueeze(im2, dim = 1)
@@ -103,8 +103,8 @@ def extract_features(loader, model, test=True):
             # # kind 1
             if test:
                 h = h.reshape(B, N, -1) # B, N, D
-                print("The shape of feature h after reshape(B, N, -1) is: ", h.shape) #[16, 2, 512]
-                print("What if I perform the mean operation here: ", torch.mean(h, dim=1).shape)
+                #print("The shape of feature h after reshape(B, N, -1) is: ", h.shape) #[16, 2, 512]
+                #print("What if I perform the mean operation here: ", torch.mean(h, dim=1).shape)
                 features.append(h)
                 label_lst.append(label)
                 #print("!!!!!!labels added!")
@@ -120,14 +120,14 @@ def extract_features(loader, model, test=True):
             #     break
 
         h_total = torch.vstack(features)
-        print("The shape of h_total is: ", h_total.shape) #[10000, 2, 512]
+        #print("The shape of h_total is: ", h_total.shape) #[10000, 2, 512]
         # # kind 1
         if test:
             h_total = torch.mean(h_total, dim=1)
-            print("after the mean operation, the shape of h_total, which is the output shape, is:", h_total.shape)
+           # print("after the mean operation, the shape of h_total, which is the output shape, is:", h_total.shape)
 
         label_total = torch.vstack(label_lst)# at this stage, the shape of label total is (datasize/batch_size, batch_size)
-        print("The shape of label total after torch.vstack() is:", label_total.shape)
+        # print("The shape of label total after torch.vstack() is:", label_total.shape)
         label_total = label_total.flatten()# we further need flatten function, this operation is performed by rows,
         # so the output is [row1 row2 row3 ... rown].
         
@@ -153,7 +153,7 @@ def perform_knn(model, train_loader, test_loader, k=1):
     # logging.info(f"The shape of l_test is: {l_test.shape}")
     # logging.info(f"The unique value in l_test is: {torch.unique(l_test)}")
     acc1, acc5, acc10  = ssl_evaluator.eval(h_test, l_test, l_train)
-    print("Here, the input of eval(feature, --, --) is h_test, the shape of h_test is: ", h_test.shape)
+    # print("Here, the input of eval(feature, --, --) is h_test, the shape of h_test is: ", h_test.shape)
 
     #train_acc, val_acc = ssl_evaluator.fit(train_loader, test_loader)
     print(f"k-nn accuracy k= {ssl_evaluator.k} for train split: {train_acc}")
@@ -425,3 +425,40 @@ if __name__ == '__main__':
 # python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --which_encoder 2 --img_num 8
 # python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --img_num 8
 # python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --which_encoder 2 --img_num 8
+    
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --weighted_knn
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --which_encoder 2 --weighted_knn 
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --weighted_knn
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --which_encoder 2 --weighted_knn
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --weighted_knn
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --which_encoder 2 --weighted_knn
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --weighted_knn
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --weighted_knn
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --weighted_knn
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --concat --weighted_knn
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --concat --weighted_knn
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --concat --weighted_knn
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --weighted_knn --img_num 8
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --which_encoder 2 --weighted_knn --img_num 8
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --weighted_knn --img_num 8
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --which_encoder 2 --weighted_knn --img_num 8
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --weighted_knn --img_num 8
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --which_encoder 2 --weighted_knn --img_num 8
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --weighted_knn --img_num 8
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --weighted_knn --img_num 8
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --weighted_knn --img_num 8
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --concat --weighted_knn --img_num 8
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --concat --weighted_knn --img_num 8
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --concat --weighted_knn --img_num 8
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --weighted_knn --img_num 15
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --which_encoder 2 --weighted_knn --img_num 15
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --weighted_knn --img_num 15
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --which_encoder 2 --weighted_knn --img_num 15
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --weighted_knn --img_num 15
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --which_encoder 2 --weighted_knn --img_num 15
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --weighted_knn --img_num 15
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --weighted_knn --img_num 15
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --weighted_knn --img_num 15
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --cifar10 --concat --weighted_knn --img_num 15
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --cifar10 --concat --weighted_knn --img_num 15
+# python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --cifar10 --concat --weighted_knn --img_num 15

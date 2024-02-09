@@ -52,10 +52,10 @@ class Retrieval():
 
     def eval(self, features, labels, y):
         feature_dim = features.shape[-1]
-        print("The dimension of feature is:", feature_dim)
+        #print("The dimension of feature is:", feature_dim)
         with torch.no_grad():
             features = features.cpu().view(-1, feature_dim).numpy()
-            print("in the eval function, the h_total after reshape is: ", features.shape)
+            #print("in the eval function, the h_total after reshape is: ", features.shape)
             labels = labels.cpu().view(-1).numpy()
             # acc = 100 * np.mean(cross_val_score(self.cls, features, labels))
             # acc = self.cls.score(features, labels)
