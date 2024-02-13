@@ -1,4 +1,5 @@
 import os
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
 import sys
 from importlib import reload
 import copy
@@ -15,6 +16,7 @@ import random
 import math
 import numpy as np
 import torch
+torch.use_deterministic_algorithms(True)
 from torch import nn, optim
 from torchvision import models
 from torchvision import transforms as T
@@ -290,7 +292,7 @@ def main():
         operation = "_summation"
         print('We are using summation')
 
-    ckpt_folder='/data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s' \
+    ckpt_folder='/data/checkpoints_yehengz/2streams_deepcopy_net_and_proj_deterministic/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s' \
         % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.seed, operation)
 
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
@@ -525,3 +527,31 @@ if __name__ == '__main__':
     main()
 
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s_deepcopy.py --sym_loss --infonce --epochs 400 --seed 233
+    
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s_deepcopy.py --sym_loss --infonce --epochs 400 --seed 233
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 400
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 400 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 300
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 300 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 200
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 200 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 100
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 100 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 10
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 10 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 20
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 20 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 30
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 30 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 40
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 40 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 50
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 50 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 60
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 60 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 70
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 70 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 80
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 80 --which_encoder 2
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 90
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams_deepcopy_net_and_proj/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation --epoch_num 90 --which_encoder 2
