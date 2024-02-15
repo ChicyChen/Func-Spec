@@ -106,6 +106,7 @@ parser.add_argument('--fraction', default=1.0, type=float)
 
 parser.add_argument('--seed', default=233, type = int) # add a seed argument that allows different random initilization of weight
 parser.add_argument('--concat', action='store_true') # default value is false, this arugment decide if we are summing two output from each encoders or concatenating them
+parser.add_argument('--prob', default = 0.5, type = float)
 
 
 def adjust_learning_rate(args, optimizer, loader, step):
@@ -238,7 +239,7 @@ def main():
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-
+    random.seed(args.seed)
 
     torch.backends.cudnn.benchmark = True
     init_distributed_mode(args)
@@ -289,8 +290,8 @@ def main():
         operation = "_summation"
         print('We are using summation')
 
-    ckpt_folder='/data/checkpoints_yehengz/2streams_rand_derivative/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.seed, operation)
+    ckpt_folder='/data/checkpoints_yehengz/2streams_rand_derivative/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s_prob%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.seed, operation, args.prob)
 
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
@@ -365,6 +366,7 @@ def main():
                                 inter_len=args.inter_len,
                                 frame_root=args.frame_root,
                                 ddp=True,
+                                prob = args.prob,
                                 dim=150,
                                 fraction=args.fraction,
                                 )
@@ -522,9 +524,12 @@ def main():
 if __name__ == '__main__':
     main()
 
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233 --prob 0.2
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233 --prob 0.7
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233 --concat
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 42
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 42 --concat    
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 3407
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 3407 --concat   
+    
+# path: /data/checkpoints_yehengz/2streams_rand_derivative/ucf_rd1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation_prob0.2
