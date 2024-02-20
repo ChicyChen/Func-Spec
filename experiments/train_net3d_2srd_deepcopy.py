@@ -1,6 +1,8 @@
 import os
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
 import sys
 from importlib import reload
+import copy
 # reload(sys)
 # sys.setdefaultencoding('utf-8')
 import argparse
@@ -8,12 +10,13 @@ sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 
-from vicclr2srd import VICCLR2SRD
+from vicclr2sdeepcopyrd import VICCLR2SDEEPCOPYRD
 
 import random
 import math
 import numpy as np
 import torch
+torch.use_deterministic_algorithms(True)
 from torch import nn, optim
 from torchvision import models
 from torchvision import transforms as T
@@ -246,7 +249,7 @@ def main():
     print(args)
     gpu = torch.device(args.device)
 
-    model_select = VICCLR2SRD
+    model_select = VICCLR2SDEEPCOPYRD
 
     if args.infonce:
         ind_name = 'nce2s'
@@ -256,21 +259,21 @@ def main():
     if args.r21d:
         model_name = 'r21d18'
         resnet1 = models.video.r2plus1d_18()
-        resnet2 = models.video.r2plus1d_18()
+        resnet2 = copy.deepcopy(resnet1)
     elif args.mc3:
         model_name = 'mc318'
         resnet1 = models.video.mc3_18()
-        resnet2 = models.video.mc3_18()
+        resnet2 = copy.deepcopy(resnet1)
     elif args.s3d:
         model_name = 's3d'
         resnet1 = models.video.s3d()
         resnet1.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
-        resnet2 = models.video.s3d()
+        resnet2 = copy.deepcopy(resnet1)
         resnet2.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
     else:
         model_name = 'r3d18'
         resnet1 = models.video.r3d_18()
-        resnet2 = models.video.r3d_18()
+        resnet2 = copy.deepcopy(resnet1)
 
     if args.k400:
         dataname = 'k400'
@@ -287,10 +290,10 @@ def main():
         operation = "_concatenation"
         print('We are using concatenation.')
     else:
-        operation = "_Summation"
+        operation = "_smmation"
         print('We are using summation')
 
-    ckpt_folder='/data/checkpoints_yehengz/2streams_rand_derivative/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s_prob%s' \
+    ckpt_folder='/data/checkpoints_yehengz/2streams_rand_derivative_dc_deterministics/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s_prob%s' \
         % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.seed, operation, args.prob)
 
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
@@ -524,12 +527,4 @@ def main():
 if __name__ == '__main__':
     main()
 
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233 --prob 0.2
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233 --prob 0.7
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233 --concat
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 42
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 42 --concat    
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 3407
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 3407 --concat   
-    
-# path: /data/checkpoints_yehengz/2streams_rand_derivative/ucf_rd1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation_prob0.2
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd_deepcopy.py --sym_loss --infonce --epochs 400 --seed 233 --prob 0.2

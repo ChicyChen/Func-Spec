@@ -27,6 +27,9 @@ def pil_loader(path):
         with Image.open(f) as img:
             return img.convert('RGB')
 
+def worker_seed(worker_id):
+    np.random.seed(233)
+    random.seed(233)
 
 
 def get_data_minik(transform_consistent=None,
@@ -268,7 +271,9 @@ def get_data_ucf(transform_consistent=None,
                 ddp=False,
                 random=False,
                 inter_len=0, # num of frames (after downsampling) between two clips
-                fraction=1.0
+                fraction=1.0,
+                seed_worker = None,
+                g = None
                 ):
     print('Loading data for "%s" ...' % mode)
     dataset = UCF101(mode=mode,
@@ -296,6 +301,8 @@ def get_data_ucf(transform_consistent=None,
                                       sampler=sampler,
                                       shuffle=False,
                                       num_workers=128,
+                                      worker_init_fn=seed_worker,
+                                      generator=g,
                                       pin_memory=True,
                                       drop_last=True)
     else:
@@ -304,6 +311,8 @@ def get_data_ucf(transform_consistent=None,
                                       sampler=sampler,
                                       shuffle=False,
                                       num_workers=128,
+                                      worker_init_fn=seed_worker,
+                                      generator=g,
                                       pin_memory=True,
                                       drop_last=True)
     print('"%s" dataset size: %d' % (mode, len(dataset)))
@@ -480,6 +489,7 @@ def get_data_ucf_derivative(transform_consistent=None,
                                       drop_last=True)
     print('"%s" dataset size: %d' % (mode, len(dataset)))
     return data_loader
+
 
 
 class UCF101(data.Dataset):

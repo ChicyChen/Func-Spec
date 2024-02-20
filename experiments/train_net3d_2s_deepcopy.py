@@ -234,16 +234,27 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
     return total_loss/num_batches
 
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() %2 **32
+    print("++++++++++++++++++++++++++++++++++++", worker_seed)
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
 
 def main():
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
     np.random.seed(args.seed)
     random.seed(args.seed)
 
+    g = torch.Generator()
+    g.manual_seed(args.seed)
 
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     init_distributed_mode(args)
     print(args)
     gpu = torch.device(args.device)
@@ -292,7 +303,7 @@ def main():
         operation = "_summation"
         print('We are using summation')
 
-    ckpt_folder='/data/checkpoints_yehengz/2streams_deepcopy_net_and_proj_deterministic/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s' \
+    ckpt_folder='/data/checkpoints_yehengz/2streams_deepcopy_deterministic_layerGather/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s' \
         % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.seed, operation)
 
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
@@ -369,7 +380,7 @@ def main():
                                 frame_root=args.frame_root,
                                 ddp=True,
                                 dim=150,
-                                fraction=args.fraction,
+                                fraction=args.fraction
                                 )
     # test_loader = get_data_ucf(batch_size=per_device_batch_size,
     #                             mode='val',
@@ -397,6 +408,8 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
+        if i > 1:
+            break
         
         # # TODO: differentiation control
         # if i%4 == 0:
@@ -411,8 +424,8 @@ def main():
         # else:
         #     # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
         #     train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
+        print("==========Number of epoch index is==========:", i)
         train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-
         # current_time = time.time()
         if args.rank == 0:
             # if i%4 == 3:
@@ -487,39 +500,39 @@ def main():
                 torch.save(state, checkpoint_path)
 
 
-    if args.rank == 0:
-        logging.info('Training from ep %d to ep %d finished' %
-            (args.start_epoch, args.epochs))
-        logging.info('Best epoch: %s' % best_epoch)
+    # if args.rank == 0:
+    #     logging.info('Training from ep %d to ep %d finished' %
+    #         (args.start_epoch, args.epochs))
+    #     logging.info('Best epoch: %s' % best_epoch)
 
-        # save your improved network
-        # save the weight of encoder1
-        checkpoint_path1 = os.path.join(
-            ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(args.epochs))
-        torch.save(resnet1.state_dict(), checkpoint_path1)
-        # save the weight of encoder2
-        checkpoint_path2 = os.path.join(
-            ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(args.epochs))
-        torch.save(resnet2.state_dict(), checkpoint_path2)
-        state = dict(
-                model=model.state_dict(),
-                optimizer=optimizer.state_dict(),
-            )
-        checkpoint_path = os.path.join(
-            ckpt_folder, 'net3d_epoch%s.pth.tar' % str(args.epochs))
-        torch.save(state, checkpoint_path)
+    #     # save your improved network
+    #     # save the weight of encoder1
+    #     checkpoint_path1 = os.path.join(
+    #         ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(args.epochs))
+    #     torch.save(resnet1.state_dict(), checkpoint_path1)
+    #     # save the weight of encoder2
+    #     checkpoint_path2 = os.path.join(
+    #         ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(args.epochs))
+    #     torch.save(resnet2.state_dict(), checkpoint_path2)
+    #     state = dict(
+    #             model=model.state_dict(),
+    #             optimizer=optimizer.state_dict(),
+    #         )
+    #     checkpoint_path = os.path.join(
+    #         ckpt_folder, 'net3d_epoch%s.pth.tar' % str(args.epochs))
+    #     torch.save(state, checkpoint_path)
 
 
-        plot_list = range(args.start_epoch, args.epochs)
-        # plot training process
-        plt.plot(plot_list, train_loss_list, label = 'train')
-        # plt.plot(plot_list, train_loss_list2, label = 'train2')
-        # plt.plot(plot_list, train_loss_list3, label = 'train3')
-        # plt.plot(plot_list, train_loss_list4, label = 'train4')
+    #     plot_list = range(args.start_epoch, args.epochs)
+    #     # plot training process
+    #     plt.plot(plot_list, train_loss_list, label = 'train')
+    #     # plt.plot(plot_list, train_loss_list2, label = 'train2')
+    #     # plt.plot(plot_list, train_loss_list3, label = 'train3')
+    #     # plt.plot(plot_list, train_loss_list4, label = 'train4')
 
-        plt.legend()
-        plt.savefig(os.path.join(
-            ckpt_folder, 'epoch%s_bs%s_loss.png' % (args.epochs, args.batch_size)))
+    #     plt.legend()
+    #     plt.savefig(os.path.join(
+    #         ckpt_folder, 'epoch%s_bs%s_loss.png' % (args.epochs, args.batch_size)))
 
 
 

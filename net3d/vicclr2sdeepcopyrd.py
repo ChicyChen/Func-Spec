@@ -1,5 +1,8 @@
-# VICCLR with double encoder, the loss in defined with the direct summation of the vector output after the projection layer.
+# VICCLR with double encoder, the loss in defined with the direct summation or concatenation of the vector output after the projection layer.
 # The two encoders have the same architecture but different random initialization(weight are not shared)
+# encoder1 have 50% to see 1st order derivative of video frame and 50% to see the video frame.
+# encoder2 sees all video frame.
+# VICCLR2SRD means VICreg, simCLR with 2 Streams and Random Derivative
 import copy
 import random
 from functools import wraps
@@ -23,7 +26,7 @@ from helpers import *
 
 # main class
 
-class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
+class VICCLR2SDEEPCOPYRD(nn.Module):
     def __init__(
       self,
       net1,
@@ -48,7 +51,7 @@ class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
       if proj_layer > 0:
           create_mlp_fn = MLP
           self.projector1 = create_mlp_fn(feature_size, projection_size, projection_hidden_size, proj_layer)
-          self.projector2 = copy.deepcopy(self.projector1) # make resnet2 the same as projector1 and in different address
+          self.projector2 = copy.deepcopy(self.projector1)
       else:
           self.projector1 = nn.Identity()
           self.projector2 = copy.deepcopy(self.projector1)
@@ -79,54 +82,37 @@ class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
 
     def forward(
         self,
-        x # x.shape = B, N, C, T, H, W
+        video, # video.shape = B, N, C, T-1, H, W
+        video_rand_derivative # video.shape = B, N, C, T-1, H, W
     ):
-        assert not (self.training and x.shape[0] == 1), 'you must have greater than 1 sample when training, due to the batchnorm in the projection layer'
+        # print("The shape of video input is: ", video.shape)
+        # print("The shape pf video_rand_derivative input is: ", video_rand_derivative.shape)
+        assert not (self.training and video.shape[0] == 1), 'you must have greater than 1 sample when training, due to the batchnorm in the projection layer'
+        assert (video.shape == video_rand_derivative.shape), 'The shape of video input and video_derivative input must be the same'
 
-        B, N, C, T, H, W = x.size()
-        x1 = x[:,0,:,:,:,:] # x1 shape is B, 1, C, T, H, W; x1 is the frame images with first data augmentation process
-        x2 = x[:,1,:,:,:,:] # x2 shape is B, 1, C, T, H, W; x2 is the frame images with second data augmentation process
-
+        B, N, C, T, H, W = video.size()
+        # x1 = x[:,0,:,:,:,:] # x1 shape is B, 1, C, T, H, W; x1 is the frame images with first data augmentation process
+        # x2 = x[:,1,:,:,:,:] # x2 shape is B, 1, C, T, H, W; x2 is the frame images with second data augmentation process
+        
         # ground truth latents
-        hidden1 = flatten(self.encoder1(x.view(B*N, C, T, H, W))) # encoder1 forward
-        hidden2 = flatten(self.encoder2(x.view(B*N, C, T, H, W))) # encoder2 forward
-        print("Comparing hidden1 and hidden2: ", (hidden1 == hidden2).all())
-        print("what is the difff?????????????????? ", torch.sum(torch.abs(hidden1 - hidden2)))
-
-        feature1_e1 = flatten(self.encoder1(x1.view(B, C, T, H, W)))
-        feature1_e2 = flatten(self.encoder2(x1.view(B, C, T, H, W)))
-        feature2_e1 = flatten(self.encoder1(x2.view(B, C, T, H, W)))
-        feature2_e2 = flatten(self.encoder2(x2.view(B, C, T, H, W)))
-
-        print("Comparing feature extrated from both encoders of x1: ", (feature1_e1 == feature1_e2).all())
-        print("what is the difff?????????????????? ", torch.sum(torch.abs(feature1_e1 - feature1_e2)))
-        print("Comparing feature extrated from both encoders of x2: ", (feature2_e1 == feature2_e2).all())
-        print("what is the difff?????????????????? ", torch.sum(torch.abs(feature2_e1 - feature2_e2)))
-
+        hidden1 = flatten(self.encoder1(video_rand_derivative.view(B*N, C, T, H, W))) # encoder1 forward
+        hidden2 = flatten(self.encoder2(video.view(B*N, C, T, H, W))) # encoder2 forward
 
         gt_z_all1 = self.projector1(hidden1) # projector1 forward for output of encoder1
-        gt_z_all2 = self.projector1(hidden2) # projector2 forward for output of encoder2
+        gt_z_all2 = self.projector2(hidden2) # projector2 forward for output of encoder2
         gt_z_all1 = gt_z_all1.reshape(B, N, -1) # B, N, D
         gt_z_all2 = gt_z_all2.reshape(B, N, -1) # B, N, D
-        # print("shape of gt_z_all is: ", gt_z_all1.shape)
-
-        print("check if two projectors have the same initializations:", (gt_z_all1 == gt_z_all2).all())
-        print("what is the difff?????????????????? ", torch.sum(torch.abs(gt_z_all1 - gt_z_all2)))
 
         if self.concat:
-            # print("Concatenation")
             gt_z_all_concat = torch.cat((gt_z_all1, gt_z_all2), dim=-1) # B, N, 2*D
-            # print("shape of gt_z_all after concatenation is: ", gt_z_all_concat.shape)
             z1 = gt_z_all_concat[:, :-1, :]
             z2 = gt_z_all_concat[:, 1:, :]
 
         else: #sum
-            # print("Summation")
             z1 = gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
             z2 = gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
             
-        z1 = torch.cat(FullGatherLayer.apply(z1), dim = 0)
-        z2 = torch.cat(FullGatherLayer.apply(z2), dim = 0)
+
         # no predictor, VICReg or SimCLR
         loss_one = self.loss_fn(z1, z2)
         if self.sym_loss:
