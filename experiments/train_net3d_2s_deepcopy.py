@@ -188,57 +188,161 @@ class LARS(optim.Optimizer):
                 p.add_(mu, alpha=-g["lr"])
 
 
-def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scaler=None, train=True, diff=False, mix=False, mix2=False):
+def train_one_epoch(args, model, train_loader, optimizer, epoch, resnet1, resnet2, ckpt_folder, gpu=None, scaler=None, train=True, diff=False, mix=False, mix2=False):
+    pretrain_path = os.path.join(ckpt_folder, 'net3d_epoch0_before_batch4.pth.tar')
+    ckpt = torch.load(pretrain_path, map_location="cpu")
+    model.load_state_dict(ckpt["model"])
+    optimizer.load_state_dict(ckpt["optimizer"])
+    logging.info("using the pretrained model")
     if train:
         model.train()
     else:
         model.eval()
     total_loss = 0.
     num_batches = len(train_loader)
-
+    train_loader.sampler.set_epoch(epoch)
     # for data in train_loader:
+    i = 1
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
+        # if i < 4:
+        #     i = i+1
+        #     pass
+        # else:
+        #     logging.info('======== this is step %s, meaning the network is going to see the %s_th batch of data' % (i,i))
+        #     logging.info('=========Model check before each step===========')
+        #     models_differ = 0
+        #     for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
+        #         if torch.equal(key_item_1[1], key_item_2[1]):
+        #             pass
+        #         else:
+        #             models_differ += 1
+        #             # if (key_item_1[0] == key_item_2[0]):
+        #             #     # print('Mismtach found at', key_item_1[0])
+        #             #     logging.info('Mismtach found at %s'% key_item_1[0])
+        #             # else:
+        #             #     raise Exception
+        #     if models_differ == 0:
+        #         print('Models match perfectly before step %s! :)'% i)
+        #         logging.info('Models match perfectly before step %s! :)'% i)
+        #     else:
+        #         print('Models DO NOT match perfectly before step %s :('% i)
+        #         logging.info('Models DO NOT match perfectly before step %s :('% i)
+        #     logging.info('=========Model check before each step===========')
+                
+        #     # TODO: be careful with video size
+        #     # N = 2 by default
+        #     video, label = data # B, N, C, T, H, W
+        #     label = label.to(gpu)
+        #     video = video.to(gpu)
+                
+        #     lr = adjust_learning_rate(args, optimizer, train_loader, step)
+
+        #     optimizer.zero_grad()
+        #     with torch.cuda.amp.autocast():
+        #         loss = model(video)
+        #         if train:
+        #             scaler.scale(loss).backward() #gradient
+        #             scaler.step(optimizer)
+        #             scaler.update()
+        #     total_loss += loss.mean().item()
+
+        #     logging.info('======== this is step %s, meaning the network completed seeing the %s_th batch of data and parameters are updated' % (i,i))
+        #     logging.info('=============================Model check after each update====================================')
+        #     models_differ = 0
+        #     for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
+        #         if torch.equal(key_item_1[1], key_item_2[1]):
+        #             pass
+        #         else:
+        #             models_differ += 1
+        #             # if (key_item_1[0] == key_item_2[0]):
+        #             #     # print('Mismtach found at', key_item_1[0])
+        #             #     logging.info('Mismtach found at %s'% key_item_1[0])
+        #             # else:
+        #             #     raise Exception
+        #     if models_differ == 0:
+        #         print('Models match perfectly! :) after step %s'% i)
+        #         logging.info('Models match perfectly! :) after step %s'% i)
+        #     else:
+        #         print('Models DO NOT match perfectly after step %s! :('% i)
+        #         logging.info('Models DO NOT match perfectly after step %s! :('% i)
+        #     logging.info('=========================Model check after update========================================')
+        #     if i==10:
+        #         break
+        #     i = i+1
+
+        logging.info('======== this is step %s, meaning the network is going to see the %s_th batch of data' % (i,i))
+        logging.info('=========Model check before each step===========')
+        models_differ = 0
+        for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
+            if torch.equal(key_item_1[1], key_item_2[1]):
+                pass
+            else:
+                models_differ += 1
+                # if (key_item_1[0] == key_item_2[0]):
+                #     # print('Mismtach found at', key_item_1[0])
+                #     logging.info('Mismtach found at %s'% key_item_1[0])
+                # else:
+                #     raise Exception
+        if models_differ == 0:
+            print('Models match perfectly before step %s! :)'% i)
+            logging.info('Models match perfectly before step %s! :)'% i)
+        else:
+            print('Models DO NOT match perfectly before step %s :('% i)
+            logging.info('Models DO NOT match perfectly before step %s :('% i)
+        logging.info('=========Model check before each step===========')
+            
         # TODO: be careful with video size
         # N = 2 by default
         video, label = data # B, N, C, T, H, W
         label = label.to(gpu)
         video = video.to(gpu)
-
-        # random differentiation step
-        # if rand:
-        # if random.random() < 0.5: # should we delete this if for fixed pair?
-        #     video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-
-        # scheduled differentiation step
-        if diff: # The shape of video is [B, N, C, T, H, W]
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-        if mix:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,1,:,:,:,:] = video_diff[:,1,:,:,:,:]
-        if mix2:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,0,:,:,:,:] = video_diff[:,0,:,:,:,:]
-
+            
         lr = adjust_learning_rate(args, optimizer, train_loader, step)
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
             loss = model(video)
             if train:
-                scaler.scale(loss).backward()
+                scaler.scale(loss).backward() #gradient
                 scaler.step(optimizer)
                 scaler.update()
         total_loss += loss.mean().item()
+        grads = []
+        #print(model.state_dict())
+        for param_tuple in model.named_parameters():
+            name, param = param_tuple
+            print(name)
+            
 
+        logging.info('======== this is step %s, meaning the network completed seeing the %s_th batch of data and parameters are updated' % (i,i))
+        logging.info('=============================Model check after each update====================================')
+        models_differ = 0
+        for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
+            if torch.equal(key_item_1[1], key_item_2[1]):
+                pass
+            else:
+                models_differ += 1
+                # if (key_item_1[0] == key_item_2[0]):
+                #     # print('Mismtach found at', key_item_1[0])
+                #     logging.info('Mismtach found at %s'% key_item_1[0])
+                # else:
+                #     raise Exception
+        if models_differ == 0:
+            print('Models match perfectly! :) after step %s'% i)
+            logging.info('Models match perfectly! :) after step %s'% i)
+        else:
+            print('Models DO NOT match perfectly after step %s! :('% i)
+            logging.info('Models DO NOT match perfectly after step %s! :('% i)
+        logging.info('=========================Model check after update========================================')
+
+        if i==1:
+            break
+        i = i+1
     return total_loss/num_batches
 
 def seed_worker(worker_id):
-    worker_seed = torch.initial_seed() %2 **32
-    print("++++++++++++++++++++++++++++++++++++", worker_seed)
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
+    np.random.seed(233)
+    random.seed(233)
 
 
 def main():
@@ -336,8 +440,8 @@ def main():
     # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu], find_unused_parameters=True)
 
-    # optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    # optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=1e-4, weight_decay=args.wd)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=args.wd)
     optimizer = LARS(
         model.parameters(),
         lr=0,
@@ -380,7 +484,9 @@ def main():
                                 frame_root=args.frame_root,
                                 ddp=True,
                                 dim=150,
-                                fraction=args.fraction
+                                fraction=args.fraction,
+                                seed_worker = seed_worker,
+                                g = g
                                 )
     # test_loader = get_data_ucf(batch_size=per_device_batch_size,
     #                             mode='val',
@@ -408,9 +514,8 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
-        if i > 1:
+        if i > 0:
             break
-        
         # # TODO: differentiation control
         # if i%4 == 0:
         #     # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
@@ -425,7 +530,7 @@ def main():
         #     # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
         #     train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
         print("==========Number of epoch index is==========:", i)
-        train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+        train_loss = train_one_epoch(args, model, train_loader, optimizer, i,resnet1.state_dict(),resnet2.state_dict(),ckpt_folder, gpu, scaler)
         # current_time = time.time()
         if args.rank == 0:
             # if i%4 == 3:
@@ -456,7 +561,6 @@ def main():
             train_loss_list.append(train_loss)
             print('Epoch: %s, Train loss: %s' % (i, train_loss))
             logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
-
 
 
             

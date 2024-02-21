@@ -124,6 +124,8 @@ class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
             # print("Summation")
             z1 = gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
             z2 = gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
+
+        print("check if there is numerical rounding error when doing the summation:", ((z1 - gt_z_all1[:, :-1, :])==gt_z_all2[:, :-1, :]).all())
             
         z1 = torch.cat(FullGatherLayer.apply(z1), dim = 0)
         z2 = torch.cat(FullGatherLayer.apply(z2), dim = 0)
