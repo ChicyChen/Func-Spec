@@ -189,11 +189,11 @@ class LARS(optim.Optimizer):
 
 
 def train_one_epoch(args, model, train_loader, optimizer, epoch, resnet1, resnet2, ckpt_folder, gpu=None, scaler=None, train=True, diff=False, mix=False, mix2=False):
-    pretrain_path = os.path.join(ckpt_folder, 'net3d_epoch0_before_batch4.pth.tar')
-    ckpt = torch.load(pretrain_path, map_location="cpu")
-    model.load_state_dict(ckpt["model"])
-    optimizer.load_state_dict(ckpt["optimizer"])
-    logging.info("using the pretrained model")
+    # pretrain_path = os.path.join(ckpt_folder, 'net3d_epoch0_before_batch4.pth.tar')
+    # ckpt = torch.load(pretrain_path, map_location="cpu")
+    # model.load_state_dict(ckpt["model"])
+    # optimizer.load_state_dict(ckpt["optimizer"])
+    # logging.info("using the pretrained model")
     if train:
         model.train()
     else:
@@ -203,6 +203,12 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, resnet1, resnet
     train_loader.sampler.set_epoch(epoch)
     # for data in train_loader:
     i = 1
+    grads_diff_record = []
+    weights_diff_record = []
+    hidden_diff_record = []
+    feature1_diff_record = []
+    feature2_diff_record = []
+    projector_diff_record = []
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
         # if i < 4:
         #     i = i+1
@@ -270,8 +276,7 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, resnet1, resnet
         #         break
         #     i = i+1
 
-        logging.info('======== this is step %s, meaning the network is going to see the %s_th batch of data' % (i,i))
-        logging.info('=========Model check before each step===========')
+        logging.info('===== this is step %s, meaning the network is going to see the %s_th batch of data =====' % (i,i))
         models_differ = 0
         for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
             if torch.equal(key_item_1[1], key_item_2[1]):
@@ -285,15 +290,16 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, resnet1, resnet
                 #     raise Exception
         if models_differ == 0:
             print('Models match perfectly before step %s! :)'% i)
-            logging.info('Models match perfectly before step %s! :)'% i)
+            logging.info('Model check before each step: Models match perfectly before step %s! :)'% i)
         else:
             print('Models DO NOT match perfectly before step %s :('% i)
-            logging.info('Models DO NOT match perfectly before step %s :('% i)
-        logging.info('=========Model check before each step===========')
+            logging.info('Model check before each step: Models DO NOT match perfectly before step %s :('% i)
             
         # TODO: be careful with video size
         # N = 2 by default
         video, label = data # B, N, C, T, H, W
+        # video = video.to(torch.double)
+        # label = label.to(torch.double)
         label = label.to(gpu)
         video = video.to(gpu)
             
@@ -301,21 +307,76 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, resnet1, resnet
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
-            loss = model(video)
+            loss, hidden_diff, feature1_diff, feature2_diff, projector_diff= model(video)
+            hidden_diff_record.append(hidden_diff.item())
+            feature1_diff_record.append(feature1_diff.item())
+            feature2_diff_record.append(feature2_diff.item())
+            projector_diff_record.append(projector_diff.item())
             if train:
                 scaler.scale(loss).backward() #gradient
                 scaler.step(optimizer)
                 scaler.update()
         total_loss += loss.mean().item()
-        grads = []
-        #print(model.state_dict())
+        
+        # get gradient of all layers of encoder1 and encoder2 as dictionary{key: layer_name, value: gradient}
+        grads_encoder1 = []
+        grads_encoder2 = []
+        weights_encoder1 = []
+        weights_encoder2 = []
         for param_tuple in model.named_parameters():
             name, param = param_tuple
-            print(name)
+            if 'encoder1' in name:
+                if 'net.fc' not in name:
+                    grads_encoder1.append((name[16:], param.grad))
+                weights_encoder1.append((name[16:], param))
+            elif 'encoder2' in name:
+                if 'net.fc' not in name:
+                    grads_encoder2.append((name[16:], param.grad))
+                weights_encoder2.append((name[16:], param))
+        grads_encoder1_dict = dict(grads_encoder1)
+        grads_encoder2_dict = dict(grads_encoder2)
+        weights_encoder1_dict = dict(weights_encoder1)
+        weights_encoder2_dict = dict(weights_encoder2)
+        grads_abs_diff_sum = 0.0
+        weights_abs_diff_sum = 0.0
+        
+        # if each layer's gradient matches
+        for key in weights_encoder1_dict.keys(): # two dict should have the same key value
+            if 'net.fc' in key:
+                weight1 = weights_encoder1_dict[key]
+                weight2 = weights_encoder2_dict[key]
+                weights_diff = torch.sum(torch.abs(weight1 - weight2))
+                print(key)
+                print("Comparing weight1 and weight2: ", (weight1 == weight2).all())
+                print("The difference between weight1 and weights2 is: ",weights_diff.item())
+                weights_abs_diff_sum = weights_abs_diff_sum + weights_diff
+            else:
+                grad1 = grads_encoder1_dict[key]
+                grad2 = grads_encoder2_dict[key]
+                weight1 = weights_encoder1_dict[key]
+                weight2 = weights_encoder2_dict[key]
+                
+                grads_diff  = torch.sum(torch.abs(grad1 - grad2))
+                weights_diff = torch.sum(torch.abs(weight1 - weight2))
+                # logging.info(key)
+                # logging.info("Comparing grad1 and grad2: %s" % (grad1 == grad2).all())
+                # logging.info("The difference between grad1 and grad2 is: %s " % torch.sum(torch.abs(grad1 - grad2)))
+                print(key)
+                print("Comparing grad1 and grad2: ", (grad1 == grad2).all())
+                print("The difference between grad1 and grad2 is: ",grads_diff.item())
+                print("Comparing weight1 and weight2: ", (weight1 == weight2).all())
+                print("The difference between weight1 and weight2 is: ",weights_diff.item())
+                grads_abs_diff_sum = grads_abs_diff_sum + grads_diff
+                weights_abs_diff_sum = weights_abs_diff_sum + weights_diff
+        
+        logging.info("The sum of all gradients' difference over layers is %s" % grads_abs_diff_sum.item())
+        logging.info("The sum of all weights' difference over layers is %s" % weights_abs_diff_sum.item())
+        grads_diff_record.append(grads_abs_diff_sum.item())
+        weights_diff_record.append(weights_abs_diff_sum.item())
+        
             
 
-        logging.info('======== this is step %s, meaning the network completed seeing the %s_th batch of data and parameters are updated' % (i,i))
-        logging.info('=============================Model check after each update====================================')
+        logging.info('=====this is step %s, meaning the network completed seeing the %s_th batch of data and parameters are updated' % (i,i))
         models_differ = 0
         for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
             if torch.equal(key_item_1[1], key_item_2[1]):
@@ -329,15 +390,21 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, resnet1, resnet
                 #     raise Exception
         if models_differ == 0:
             print('Models match perfectly! :) after step %s'% i)
-            logging.info('Models match perfectly! :) after step %s'% i)
+            logging.info('Model check after update of this step: Models match perfectly! :) after step %s'% i)
         else:
             print('Models DO NOT match perfectly after step %s! :('% i)
-            logging.info('Models DO NOT match perfectly after step %s! :('% i)
-        logging.info('=========================Model check after update========================================')
+            logging.info('Model check after update of this step:: Models DO NOT match perfectly after step %s! :('% i)
 
-        if i==1:
+
+        if i==30:
             break
         i = i+1
+    logging.info("The hidden diff record is %s" % hidden_diff_record)
+    logging.info("The feature1 diff record is %s" % feature1_diff_record)
+    logging.info("The feature2 diff record is %s" % feature2_diff_record)
+    logging.info("The projector diff record is %s" % projector_diff_record)
+    logging.info("The grads diff record is: %s" % grads_diff_record)
+    logging.info("The weights diff record is: %s" % weights_diff_record)
     return total_loss/num_batches
 
 def seed_worker(worker_id):
@@ -435,6 +502,7 @@ def main():
         infonce = args.infonce,
         concat = args.concat, # determine if we perform sum or concatenation operation on outputs of f1 and f2
     ).cuda(gpu)
+    
     # sync bn does not works for ode
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
