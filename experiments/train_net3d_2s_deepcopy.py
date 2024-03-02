@@ -109,6 +109,7 @@ parser.add_argument('--fraction', default=1.0, type=float)
 
 parser.add_argument('--seed', default=233, type = int) # add a seed argument that allows different random initilization of weight
 parser.add_argument('--concat', action='store_true') # default value is false, this arugment decide if we are summing two output from each encoders or concatenating them
+parser.add_argument('--record_diff', action='store_true') # default value is false, this argument decide if we are recording the hidden_diff in each step of training
 
 
 def adjust_learning_rate(args, optimizer, loader, step):
@@ -187,13 +188,72 @@ class LARS(optim.Optimizer):
 
                 p.add_(mu, alpha=-g["lr"])
 
+def compare_models(model_1, model_2, i, before = True):
+    if before:
+        compare_state = 'before'
+    else:
+        compare_state = 'after'
 
-def train_one_epoch(args, model, train_loader, optimizer, epoch, resnet1, resnet2, ckpt_folder, gpu=None, scaler=None, train=True, diff=False, mix=False, mix2=False):
-    # pretrain_path = os.path.join(ckpt_folder, 'net3d_epoch0_before_batch4.pth.tar')
-    # ckpt = torch.load(pretrain_path, map_location="cpu")
-    # model.load_state_dict(ckpt["model"])
-    # optimizer.load_state_dict(ckpt["optimizer"])
-    # logging.info("using the pretrained model")
+    logging.info('=========Model check %s each step===========' % compare_state)
+    models_differ = 0
+    for key_item_1, key_item_2 in zip(model_1.items(), model_2.items()):
+        if torch.equal(key_item_1[1], key_item_2[1]):
+            pass
+        else:
+            models_differ += 1
+    if models_differ == 0:
+        print('Models match perfectly %s step %s! :)'% (compare_state, i))
+        logging.info('Models match perfectly %s step %s! :)'% (compare_state, i))
+    else:
+        print('Models DO NOT match perfectly %s step %s :('% (compare_state, i))
+        logging.info('Models DO NOT match perfectly %s step %s :('% (compare_state, i))
+    logging.info('=========Model check %s each step===========' % compare_state)
+
+def round_params(model, decimals=4):
+    """Round the weights of all parameters in a model to a specified number of decimal places."""
+    for param in model.parameters():
+        param.data = torch.round(param.data * 10**decimals) / (10**decimals) # torch.floor() is another option
+
+def round_gradients(model, decimals=4):
+    """Round the gradients of all parameters in a model to a specified number of decimal places."""
+    with torch.no_grad():
+        for param in model.parameters():
+            if param.grad is not None:
+                param.grad.data = torch.round(param.grad.data * 10**decimals) / (10**decimals)
+
+def get_gradient_and_weight(model, grads_encoder1, grads_encoder2, weights_encoder1, weights_encoder2):
+    """get gradients of all layers of encoder1 and encoder2 as dictionary{key: layer_name, value: gradient}
+       get weights of all layers of encoder1 and encoder2 as dictionary{key: layer_name, value: weight}"""
+    for param_tuple in model.named_parameters():
+        name, param = param_tuple
+        if 'encoder1' in name and 'net.fc' not in name:
+            grads_encoder1[name[16:]] = param.grad
+            weights_encoder1[name[16:]] = param
+        elif 'encoder2' in name and 'net.fc' not in name:
+            grads_encoder2[name[16:]] = param.grad
+            weights_encoder2[name[16:]] = param
+
+def compute_MAE(grads_encoder1, grads_encoder2, weights_encoder1, weights_encoder2):
+    """compute the mean absolute error of each layers' gradient and weight of encoder1 and encoder2,
+       and then sum them together"""
+    grads_MAE = 0.0
+    weights_MAE = 0.0
+    for key in weights_encoder1.keys(): # two dict should have the same key value
+        grads_diff  = torch.sum(torch.abs(grads_encoder1[key] - grads_encoder2[key]))
+        weights_diff = torch.sum(torch.abs(weights_encoder1[key] - weights_encoder2[key]))
+        grads_MAE = grads_MAE + grads_diff
+        weights_MAE = weights_MAE + weights_diff
+    return grads_MAE, weights_MAE
+    
+
+
+def train_one_epoch(args, 
+                    model, train_loader, optimizer, epoch,
+                    resnet1, resnet2, ckpt_folder,
+                    hidden_diff_record, feature1_diff_record, feature2_diff_record, projector_diff_record, 
+                    grads_diff_record, weights_diff_record,
+                    grads_encoder1, grads_encoder2, weights_encoder1, weights_encoder2,
+                    gpu=None, scaler=None, train=True, diff=False, mix=False, mix2=False):
     if train:
         model.train()
     else:
@@ -201,210 +261,75 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, resnet1, resnet
     total_loss = 0.
     num_batches = len(train_loader)
     train_loader.sampler.set_epoch(epoch)
+
     # for data in train_loader:
-    i = 1
-    grads_diff_record = []
-    weights_diff_record = []
-    hidden_diff_record = []
-    feature1_diff_record = []
-    feature2_diff_record = []
-    projector_diff_record = []
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
-        # if i < 4:
-        #     i = i+1
-        #     pass
-        # else:
-        #     logging.info('======== this is step %s, meaning the network is going to see the %s_th batch of data' % (i,i))
-        #     logging.info('=========Model check before each step===========')
-        #     models_differ = 0
-        #     for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
-        #         if torch.equal(key_item_1[1], key_item_2[1]):
-        #             pass
-        #         else:
-        #             models_differ += 1
-        #             # if (key_item_1[0] == key_item_2[0]):
-        #             #     # print('Mismtach found at', key_item_1[0])
-        #             #     logging.info('Mismtach found at %s'% key_item_1[0])
-        #             # else:
-        #             #     raise Exception
-        #     if models_differ == 0:
-        #         print('Models match perfectly before step %s! :)'% i)
-        #         logging.info('Models match perfectly before step %s! :)'% i)
-        #     else:
-        #         print('Models DO NOT match perfectly before step %s :('% i)
-        #         logging.info('Models DO NOT match perfectly before step %s :('% i)
-        #     logging.info('=========Model check before each step===========')
-                
-        #     # TODO: be careful with video size
-        #     # N = 2 by default
-        #     video, label = data # B, N, C, T, H, W
-        #     label = label.to(gpu)
-        #     video = video.to(gpu)
-                
-        #     lr = adjust_learning_rate(args, optimizer, train_loader, step)
+        step_index = step%148     
+        print((step, step_index)) 
+        # compare_models(resnet1, resnet2, step_index)   
 
-        #     optimizer.zero_grad()
-        #     with torch.cuda.amp.autocast():
-        #         loss = model(video)
-        #         if train:
-        #             scaler.scale(loss).backward() #gradient
-        #             scaler.step(optimizer)
-        #             scaler.update()
-        #     total_loss += loss.mean().item()
-
-        #     logging.info('======== this is step %s, meaning the network completed seeing the %s_th batch of data and parameters are updated' % (i,i))
-        #     logging.info('=============================Model check after each update====================================')
-        #     models_differ = 0
-        #     for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
-        #         if torch.equal(key_item_1[1], key_item_2[1]):
-        #             pass
-        #         else:
-        #             models_differ += 1
-        #             # if (key_item_1[0] == key_item_2[0]):
-        #             #     # print('Mismtach found at', key_item_1[0])
-        #             #     logging.info('Mismtach found at %s'% key_item_1[0])
-        #             # else:
-        #             #     raise Exception
-        #     if models_differ == 0:
-        #         print('Models match perfectly! :) after step %s'% i)
-        #         logging.info('Models match perfectly! :) after step %s'% i)
-        #     else:
-        #         print('Models DO NOT match perfectly after step %s! :('% i)
-        #         logging.info('Models DO NOT match perfectly after step %s! :('% i)
-        #     logging.info('=========================Model check after update========================================')
-        #     if i==10:
-        #         break
-        #     i = i+1
-
-        logging.info('===== this is step %s, meaning the network is going to see the %s_th batch of data =====' % (i,i))
-        models_differ = 0
-        for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
-            if torch.equal(key_item_1[1], key_item_2[1]):
-                pass
-            else:
-                models_differ += 1
-                # if (key_item_1[0] == key_item_2[0]):
-                #     # print('Mismtach found at', key_item_1[0])
-                #     logging.info('Mismtach found at %s'% key_item_1[0])
-                # else:
-                #     raise Exception
-        if models_differ == 0:
-            print('Models match perfectly before step %s! :)'% i)
-            logging.info('Model check before each step: Models match perfectly before step %s! :)'% i)
-        else:
-            print('Models DO NOT match perfectly before step %s :('% i)
-            logging.info('Model check before each step: Models DO NOT match perfectly before step %s :('% i)
-            
         # TODO: be careful with video size
         # N = 2 by default
         video, label = data # B, N, C, T, H, W
-        # video = video.to(torch.double)
-        # label = label.to(torch.double)
+        # video = video.to(torch.double) # comment this line if using auto-cast
+        # label = label.to(torch.double) # comment this line if using auto-cast
         label = label.to(gpu)
         video = video.to(gpu)
+
             
         lr = adjust_learning_rate(args, optimizer, train_loader, step)
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
-            loss, hidden_diff, feature1_diff, feature2_diff, projector_diff= model(video)
-            hidden_diff_record.append(hidden_diff.item())
-            feature1_diff_record.append(feature1_diff.item())
-            feature2_diff_record.append(feature2_diff.item())
-            projector_diff_record.append(projector_diff.item())
+            if args.record_diff:
+                loss, hidden_diff, feature1_diff, feature2_diff, proj_diff = model(video, args.record_diff)
+                if step == step_index:
+                    hidden_diff_record.append(hidden_diff.item())
+                    feature1_diff_record.append(feature1_diff.item())
+                    feature2_diff_record.append(feature2_diff.item())
+                    projector_diff_record.append(proj_diff.item())
+                else:
+                    hidden_diff_record[step_index] = hidden_diff.item()
+                    feature1_diff_record[step_index] = feature1_diff.item()
+                    feature2_diff_record[step_index] = feature2_diff.item()
+                    projector_diff_record[step_index] = proj_diff.item()
+                print("updating hidden, f1, f2, projector diff.")
+            else:
+                loss = model(video)
+
+
             if train:
                 scaler.scale(loss).backward() #gradient
+                # round_gradients(model)
                 scaler.step(optimizer)
                 scaler.update()
         total_loss += loss.mean().item()
+        print("update total_loss")
+
+        # round_params(model)
+        # print("round model to have 4 decimal places")
+
+        if args.record_diff:
+            get_gradient_and_weight(model, grads_encoder1, grads_encoder2, weights_encoder1, weights_encoder2)
+            # print("complete filling grad and weight dict")
+            grads_MAE, weights_MAE = compute_MAE(grads_encoder1, grads_encoder2, weights_encoder1, weights_encoder2)
         
-        # get gradient of all layers of encoder1 and encoder2 as dictionary{key: layer_name, value: gradient}
-        grads_encoder1 = []
-        grads_encoder2 = []
-        weights_encoder1 = []
-        weights_encoder2 = []
-        for param_tuple in model.named_parameters():
-            name, param = param_tuple
-            if 'encoder1' in name:
-                if 'net.fc' not in name:
-                    grads_encoder1.append((name[16:], param.grad))
-                weights_encoder1.append((name[16:], param))
-            elif 'encoder2' in name:
-                if 'net.fc' not in name:
-                    grads_encoder2.append((name[16:], param.grad))
-                weights_encoder2.append((name[16:], param))
-        grads_encoder1_dict = dict(grads_encoder1)
-        grads_encoder2_dict = dict(grads_encoder2)
-        weights_encoder1_dict = dict(weights_encoder1)
-        weights_encoder2_dict = dict(weights_encoder2)
-        grads_abs_diff_sum = 0.0
-        weights_abs_diff_sum = 0.0
-        
-        # if each layer's gradient matches
-        for key in weights_encoder1_dict.keys(): # two dict should have the same key value
-            if 'net.fc' in key:
-                weight1 = weights_encoder1_dict[key]
-                weight2 = weights_encoder2_dict[key]
-                weights_diff = torch.sum(torch.abs(weight1 - weight2))
-                print(key)
-                print("Comparing weight1 and weight2: ", (weight1 == weight2).all())
-                print("The difference between weight1 and weights2 is: ",weights_diff.item())
-                weights_abs_diff_sum = weights_abs_diff_sum + weights_diff
+            if step == step_index:
+                grads_diff_record.append(grads_MAE.item())
+                weights_diff_record.append(weights_MAE.item())
             else:
-                grad1 = grads_encoder1_dict[key]
-                grad2 = grads_encoder2_dict[key]
-                weight1 = weights_encoder1_dict[key]
-                weight2 = weights_encoder2_dict[key]
-                
-                grads_diff  = torch.sum(torch.abs(grad1 - grad2))
-                weights_diff = torch.sum(torch.abs(weight1 - weight2))
-                # logging.info(key)
-                # logging.info("Comparing grad1 and grad2: %s" % (grad1 == grad2).all())
-                # logging.info("The difference between grad1 and grad2 is: %s " % torch.sum(torch.abs(grad1 - grad2)))
-                print(key)
-                print("Comparing grad1 and grad2: ", (grad1 == grad2).all())
-                print("The difference between grad1 and grad2 is: ",grads_diff.item())
-                print("Comparing weight1 and weight2: ", (weight1 == weight2).all())
-                print("The difference between weight1 and weight2 is: ",weights_diff.item())
-                grads_abs_diff_sum = grads_abs_diff_sum + grads_diff
-                weights_abs_diff_sum = weights_abs_diff_sum + weights_diff
-        
-        logging.info("The sum of all gradients' difference over layers is %s" % grads_abs_diff_sum.item())
-        logging.info("The sum of all weights' difference over layers is %s" % weights_abs_diff_sum.item())
-        grads_diff_record.append(grads_abs_diff_sum.item())
-        weights_diff_record.append(weights_abs_diff_sum.item())
-        
-            
+                grads_diff_record[step_index] = grads_MAE.item()
+                weights_diff_record[step_index] = weights_MAE.item()
+            # print("updating grad and weight difference")
 
-        logging.info('=====this is step %s, meaning the network completed seeing the %s_th batch of data and parameters are updated' % (i,i))
-        models_differ = 0
-        for key_item_1, key_item_2 in zip(resnet1.items(), resnet2.items()):
-            if torch.equal(key_item_1[1], key_item_2[1]):
-                pass
-            else:
-                models_differ += 1
-                # if (key_item_1[0] == key_item_2[0]):
-                #     # print('Mismtach found at', key_item_1[0])
-                #     logging.info('Mismtach found at %s'% key_item_1[0])
-                # else:
-                #     raise Exception
-        if models_differ == 0:
-            print('Models match perfectly! :) after step %s'% i)
-            logging.info('Model check after update of this step: Models match perfectly! :) after step %s'% i)
-        else:
-            print('Models DO NOT match perfectly after step %s! :('% i)
-            logging.info('Model check after update of this step:: Models DO NOT match perfectly after step %s! :('% i)
+            # compare_models(resnet1, resnet2, step_index, False)
 
-
-        if i==30:
-            break
-        i = i+1
-    logging.info("The hidden diff record is %s" % hidden_diff_record)
-    logging.info("The feature1 diff record is %s" % feature1_diff_record)
-    logging.info("The feature2 diff record is %s" % feature2_diff_record)
-    logging.info("The projector diff record is %s" % projector_diff_record)
-    logging.info("The grads diff record is: %s" % grads_diff_record)
-    logging.info("The weights diff record is: %s" % weights_diff_record)
+    # logging.info("The hidden diff record is %s" % hidden_diff_record)
+    # logging.info("The feature1 diff record is %s" % feature1_diff_record)
+    # logging.info("The feature2 diff record is %s" % feature2_diff_record)
+    # logging.info("The projector diff record is %s" % projector_diff_record)
+    # logging.info("The grads diff record is: %s" % grads_diff_record)
+    # logging.info("The weights diff record is: %s" % weights_diff_record)
     return total_loss/num_batches
 
 def seed_worker(worker_id):
@@ -507,6 +432,9 @@ def main():
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu], find_unused_parameters=True)
+    print(model.module)
+    print(type(model.module))
+
 
     # optimizer = torch.optim.SGD(model.parameters(), lr=1e-4, weight_decay=args.wd)
     # optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=args.wd)
@@ -523,11 +451,32 @@ def main():
         ckpt = torch.load(pretrain_path, map_location="cpu")
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
+    
+    # pretrain_path = os.path.join(ckpt_folder, 'net3d_epoch100.pth.tar')
+    # logging.info("The pretrained path is %s" % pretrain_path)
+    # ckpt = torch.load(pretrain_path, map_location="cpu")
+    # model.load_state_dict(ckpt["model"])
+    # optimizer.load_state_dict(ckpt["optimizer"])
+    # model.module.net2_as_net1_deepcopy()
+    # e1, e2 = model.module.get_encoders()
+
+    # models_differ = 0
+    # for key_item_1, key_item_2 in zip(e1.state_dict().items(), e2.state_dict().items()):
+    #     if torch.equal(key_item_1[1], key_item_2[1]):
+    #         pass
+    #     else:
+    #         models_differ += 1
+    #         if (key_item_1[0] == key_item_2[0]):
+    #             print('Mismtach found at', key_item_1[0])
+    #         else:
+    #             raise Exception
+    # if models_differ == 0:
+    #     print('Models match perfectly! :)')
+    #     logging.info('Models match perfectly! :)')
 
     assert args.batch_size % args.world_size == 0
 
     per_device_batch_size = args.batch_size // args.world_size
-    # print(per_device_batch_size)
 
     if args.k400:
         loader_method = get_data_k400
@@ -556,76 +505,64 @@ def main():
                                 seed_worker = seed_worker,
                                 g = g
                                 )
-    # test_loader = get_data_ucf(batch_size=per_device_batch_size,
-    #                             mode='val',
-    #                             transform_consistent=None,
-    #                             transform_inconsistent=default_transform2(),
-    #                             seq_len=args.seq_len,
-    #                             num_seq=args.num_seq,
-    #                             downsample=args.downsample,
-    #                             random=args.random,
-    #                             inter_len=args.inter_len,
-    #                             frame_root=args.frame_root,
-    #                             ddp=True,
-    #                             dim = 240,
-    #                             fraction = args.fraction
-    #                             )
 
     train_loss_list = []
-    # train_loss_list2 = []
-    # train_loss_list3 = []
-    # train_loss_list4 = []
     epoch_list = range(args.start_epoch, args.epochs)
     lowest_loss = np.inf
     best_epoch = 0
 
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
+    hidden_diff_record = []
+    feature1_diff_record = []
+    feature2_diff_record = []
+    projector_diff_record = []
+    grads_diff_record = []
+    weights_diff_record = []
+    grads_encoder1 = {}
+    grads_encoder2 = {}
+    weights_encoder1 = {}
+    weights_encoder2 = {}
     for i in epoch_list:
-        if i > 0:
+        if i == 1:
             break
-        # # TODO: differentiation control
-        # if i%4 == 0:
-        #     # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
-        #     train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        # elif i%4 == 1:
-        #     # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        #     train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        # elif i%4 == 2:
-        #     # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-        #     train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-        # else:
-        #     # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        #     train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
-        print("==========Number of epoch index is==========:", i)
-        train_loss = train_one_epoch(args, model, train_loader, optimizer, i,resnet1.state_dict(),resnet2.state_dict(),ckpt_folder, gpu, scaler)
-        # current_time = time.time()
-        if args.rank == 0:
-            # if i%4 == 3:
-            # # if i%3 == 2:
-            # # if i%2 == 1:
-            #     if train_loss < lowest_loss:
-            #         lowest_loss = train_loss
-            #         best_epoch = i + 1
-            if train_loss < lowest_loss:
-                lowest_loss = train_loss
 
-            # if i%4 == 0:
-            #     train_loss_list2.append(train_loss2)
-            #     print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-            #     logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-            # elif i%4 == 1:
-            #     train_loss_list3.append(train_loss3)
-            #     print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-            #     logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-            # elif i%4 == 2:
-            #     train_loss_list4.append(train_loss4)
-            #     print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-            #     logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-            # else:
-            #     train_loss_list.append(train_loss)
-            #     print('Epoch: %s, Train loss: %s' % (i, train_loss))
-            #     logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+        print("==========Number of epoch index is==========:", i)
+        train_loss = train_one_epoch(args, 
+                                     model, train_loader, optimizer, i,
+                                     resnet1.state_dict(), resnet2.state_dict() ,ckpt_folder,
+                                     hidden_diff_record, feature1_diff_record, feature2_diff_record, projector_diff_record, 
+                                     grads_diff_record, weights_diff_record,
+                                     grads_encoder1, grads_encoder2, weights_encoder1, weights_encoder2, 
+                                     gpu, scaler)
+        # if i<10:
+        #     model.module.net2_as_net1_deepcopy()
+        #     print("update the model!!!")
+        #     e1, e2 = model.module.get_encoders()
+
+            # models_differ = 0
+            # for key_item_1, key_item_2 in zip(e1.state_dict().items(), e2.state_dict().items()):
+            #     if torch.equal(key_item_1[1], key_item_2[1]):
+            #         pass
+            #     else:
+            #         models_differ += 1
+            #         if (key_item_1[0] == key_item_2[0]):
+            #             print('Mismtach found at', key_item_1[0])
+            #         else:
+            #             raise Exception
+            # if models_differ == 0:
+            #     print('Models match perfectly! :)')
+            #     logging.info('Models match perfectly! :)')
+
+    
+        # # current_time = time.time()
+        if args.rank == 0:
+            # if train_loss < lowest_loss:
+            #     lowest_loss = train_loss
+            #     best_epoch = i + 1
+            # if train_loss < lowest_loss:
+            #     lowest_loss = train_loss
+
             train_loss_list.append(train_loss)
             print('Epoch: %s, Train loss: %s' % (i, train_loss))
             logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))

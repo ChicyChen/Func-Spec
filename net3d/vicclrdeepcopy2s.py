@@ -43,7 +43,7 @@ class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
       concat = False,
   ):
       super().__init__()
-
+     
       self.encoder1 = NetHook(net1, hidden_layer)
       self.encoder2 = NetHook(net2, hidden_layer)
 
@@ -78,15 +78,14 @@ class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
             loss = vic_reg_nonorm_loss(x, y, self.mse_l, self.std_l, self.cov_l)
 
         return loss
-
+    
     def forward(
         self,
-        x # x.shape = B, N, C, T, H, W
+        x, # x.shape = B, N, C, T, H, W
+        record_diff = False
     ):
         assert not (self.training and x.shape[0] == 1), 'you must have greater than 1 sample when training, due to the batchnorm in the projection layer'
         
-        
-
         B, N, C, T, H, W = x.size()
         x1 = x[:,0,:,:,:,:] # x1 shape is B, 1, C, T, H, W; x1 is the frame images with first data augmentation process
         x2 = x[:,1,:,:,:,:] # x2 shape is B, 1, C, T, H, W; x2 is the frame images with second data augmentation process
@@ -94,53 +93,23 @@ class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
         # ground truth latents
         hidden1 = flatten(self.encoder1(x.view(B*N, C, T, H, W))) # encoder1 forward
         hidden2 = flatten(self.encoder2(x.view(B*N, C, T, H, W))) # encoder2 forward
-        hidden_diff  = torch.sum(torch.abs(hidden1 - hidden2))
-        print("Comparing hidden1 and hidden2: ", (hidden1 == hidden2).all())
-        print("what is the difff?????????????????? ", hidden_diff.item())
-        logging.info("The difference between hidden1 and hidden2 is: %s" % hidden_diff.item())
-
-        feature1_e1 = flatten(self.encoder1(x1.view(B, C, T, H, W)))
-        feature1_e2 = flatten(self.encoder2(x1.view(B, C, T, H, W)))
-        feature2_e1 = flatten(self.encoder1(x2.view(B, C, T, H, W)))
-        feature2_e2 = flatten(self.encoder2(x2.view(B, C, T, H, W)))
-        feature1_diff = torch.sum(torch.abs(feature1_e1 - feature1_e2))
-        feature2_diff = torch.sum(torch.abs(feature2_e1 - feature2_e2))
-
-        print("Comparing feature extrated from both encoders of x1: ", (feature1_e1 == feature1_e2).all())
-        print("what is the difff?????????????????? ", feature1_diff.item())
-        logging.info("The difference between feature1_e1 and feature1_e2 is: %s" % feature1_diff.item())
-        print("Comparing feature extrated from both encoders of x2: ", (feature2_e1 == feature2_e2).all())
-        print("what is the difff?????????????????? ", feature2_diff.item())
-        logging.info("The difference between feature2_e1 and feature2_e2 is: %s" % feature2_diff.item())
-
 
         gt_z_all1 = self.projector1(hidden1) # projector1 forward for output of encoder1
         gt_z_all2 = self.projector1(hidden2) # projector2 forward for output of encoder2
         gt_z_all1 = gt_z_all1.reshape(B, N, -1) # B, N, D
         gt_z_all2 = gt_z_all2.reshape(B, N, -1) # B, N, D
-        projector_diff = torch.sum(torch.abs(gt_z_all1 - gt_z_all2))
-
-
-        print("check if two projectors have the same initializations:", (gt_z_all1 == gt_z_all2).all())
-        print("what is the difff?????????????????? ", projector_diff.item())
-        logging.info("The difference after passing to the projector is: %s" % projector_diff.item())
 
         if self.concat:
-            # print("Concatenation")
             gt_z_all_concat = torch.cat((gt_z_all1, gt_z_all2), dim=-1) # B, N, 2*D
-            # print("shape of gt_z_all after concatenation is: ", gt_z_all_concat.shape)
             z1 = gt_z_all_concat[:, :-1, :]
             z2 = gt_z_all_concat[:, 1:, :]
-
         else: #sum
-            # print("Summation")
             z1 = gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
             z2 = gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
 
-        print("check if there is numerical rounding error when doing the summation:", ((z1 - gt_z_all1[:, :-1, :])==gt_z_all2[:, :-1, :]).all())
-            
         z1 = torch.cat(FullGatherLayer.apply(z1), dim = 0)
         z2 = torch.cat(FullGatherLayer.apply(z2), dim = 0)
+
         # no predictor, VICReg or SimCLR
         loss_one = self.loss_fn(z1, z2)
         if self.sym_loss:
@@ -148,9 +117,34 @@ class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
             loss = loss_one + loss_two
         else:
           loss = loss_one * 2
-        return loss, hidden_diff, feature1_diff, feature2_diff, projector_diff
-    
 
+        if record_diff:
+            feature1_e1 = flatten(self.encoder1(x1.view(B, C, T, H, W)))
+            feature1_e2 = flatten(self.encoder2(x1.view(B, C, T, H, W)))
+            feature2_e1 = flatten(self.encoder1(x2.view(B, C, T, H, W)))
+            feature2_e2 = flatten(self.encoder2(x2.view(B, C, T, H, W)))
+                
+            hidden_diff  = torch.sum(torch.abs(hidden1 - hidden2))
+            feature1_diff = torch.sum(torch.abs(feature1_e1 - feature1_e2))
+            feature2_diff = torch.sum(torch.abs(feature2_e1 - feature2_e2))
+            projector_diff = torch.sum(torch.abs(gt_z_all1 - gt_z_all2))
+
+            # logging.info("The difference between hidden1 and hidden2 is: %s" % hidden_diff.item())
+            # logging.info("The difference between feature1_e1 and feature1_e2 is: %s" % feature1_diff.item())
+            # logging.info("The difference between feature2_e1 and feature2_e2 is: %s" % feature2_diff.item())
+            # logging.info("The difference after passing to the projector is: %s" % projector_diff.item())
+            
+            return loss, hidden_diff, feature1_diff, feature2_diff, projector_diff
+        else:
+            return loss
+
+
+    def net2_as_net1_deepcopy(self):
+        self.encoder2 = copy.deepcopy(self.encoder1)
+        return 0
+    
+    def get_encoders(self):
+        return self.encoder1, self.encoder2
 
 class FullGatherLayer(torch.autograd.Function):
     """
