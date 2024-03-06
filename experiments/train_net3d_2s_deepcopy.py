@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 
 from augmentation import *
 from distributed_utils import init_distributed_mode
-from models_comparsion import *
+from models_comparison import *
 
 # python -m torch.distributed.launch --nproc_per_node=8 experiments/train_net3d.py --sym_loss
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --sym_loss --epochs 12
