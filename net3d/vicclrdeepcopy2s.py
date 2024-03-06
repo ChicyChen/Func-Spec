@@ -84,6 +84,11 @@ class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
         x, # x.shape = B, N, C, T, H, W
         record_diff = False
     ):
+        """!!!Caution!!! When setting record_diff = True, the training might get stuck at random step.
+        Too many computations of different variables result in this problem.
+        Recording three or less of 'hidden, f1, f1, proj' might be safe(unstucked) for longer training step 
+        when recording weight differences and gradient differences"""
+        
         assert not (self.training and x.shape[0] == 1), 'you must have greater than 1 sample when training, due to the batchnorm in the projection layer'
         
         B, N, C, T, H, W = x.size()
@@ -128,11 +133,6 @@ class VICCLRDEEPCOPY2S(nn.Module): # DE for double encoder
             feature1_diff = torch.sum(torch.abs(feature1_e1 - feature1_e2))
             feature2_diff = torch.sum(torch.abs(feature2_e1 - feature2_e2))
             projector_diff = torch.sum(torch.abs(gt_z_all1 - gt_z_all2))
-
-            # logging.info("The difference between hidden1 and hidden2 is: %s" % hidden_diff.item())
-            # logging.info("The difference between feature1_e1 and feature1_e2 is: %s" % feature1_diff.item())
-            # logging.info("The difference between feature2_e1 and feature2_e2 is: %s" % feature2_diff.item())
-            # logging.info("The difference after passing to the projector is: %s" % projector_diff.item())
             
             return loss, hidden_diff, feature1_diff, feature2_diff, projector_diff
         else:
