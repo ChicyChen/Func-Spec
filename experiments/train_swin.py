@@ -8,7 +8,7 @@ sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 
-from vicclr import VICCLR
+from swinclr import SWINCLR
 
 import random
 import math
@@ -45,7 +45,7 @@ parser.add_argument('--frame_root', default='/data', type=str,
                     
 parser.add_argument('--gpu', default='0,1,2,3,4,5,6,7', type=str)
 
-parser.add_argument('--epochs', default=400, type=int,
+parser.add_argument('--epochs', default=300, type=int,
                     help='number of total epochs to run')
 parser.add_argument('--start_epoch', default=0, type=int,
                     help='manual epoch number (useful on restarts)')
@@ -104,8 +104,8 @@ parser.add_argument('--fraction', default=1.0, type=float)
 
 def adjust_learning_rate(args, optimizer, loader, step):
     max_steps = args.epochs * len(loader)
-    # warmup_steps = 10 * len(loader)
-    warmup_steps = 0
+    warmup_steps = 10 * len(loader)
+    # warmup_steps = 0
     base_lr = args.base_lr * args.batch_size / 256
     if step < warmup_steps:
         lr = base_lr * step / warmup_steps
@@ -189,12 +189,10 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
     # for data in train_loader:
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
-        if step >0:
-            break
         # TODO: be careful with video size
         # N = 2 by default
         video, label = data # B, N, C, T, H, W
-        print(video.shape)
+        # print(video.shape)
         label = label.to(gpu)
         video = video.to(gpu)
 
@@ -218,7 +216,7 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
         lr = adjust_learning_rate(args, optimizer, train_loader, step)
 
         optimizer.zero_grad()
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             loss = model(video)
             if train:
                 scaler.scale(loss).backward()
@@ -240,26 +238,15 @@ def main():
     print(args)
     gpu = torch.device(args.device)
     
-    model_select = VICCLR
+    model_select = SWINCLR
 
     if args.infonce:
         ind_name = 'nce'
     else:
         ind_name = 'pcn'
 
-    if args.r21d:
-        model_name = 'r21d18'
-        resnet = models.video.r2plus1d_18()
-    elif args.mc3:
-        model_name = 'mc318'
-        resnet = models.video.mc3_18()
-    elif args.s3d:
-        model_name = 's3d'
-        resnet = models.video.s3d()
-        resnet.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
-    else:
-        model_name = 'r3d18'
-        resnet = models.video.r3d_18()
+    model_name = 'swin3dtiny'
+    swinTransformer = models.video.swin3d_t()
 
     if args.k400:
         dataname = 'k400'
@@ -272,7 +259,7 @@ def main():
     else:
         dataname = 'ucf'
 
-    ckpt_folder='/home/yehengz/Func-Spec/checkpoints/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
+    ckpt_folder='/data/checkpoints_yehengz/swin/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
         % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
     
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
@@ -286,7 +273,7 @@ def main():
    
 
     model = model_select(
-        resnet,
+        swinTransformer,
         hidden_layer = 'avgpool',
         feature_size = args.feature_size,
         projection_size = args.projection,
@@ -304,14 +291,14 @@ def main():
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu], find_unused_parameters=True)
 
     # optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    # optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    optimizer = LARS(
-        model.parameters(),
-        lr=0,
-        weight_decay=args.wd,
-        weight_decay_filter=exclude_bias_and_norm,
-        lars_adaptation_filter=exclude_bias_and_norm,
-    )
+    optimizer = torch.optim.AdamW(model.parameters(), eps=1e-8, lr=4.8, weight_decay=args.wd)
+    # optimizer = LARS(
+    #     model.parameters(),
+    #     lr=0,
+    #     weight_decay=args.wd,
+    #     weight_decay_filter=exclude_bias_and_norm,
+    #     lars_adaptation_filter=exclude_bias_and_norm,
+    # )
 
     if args.pretrain:
         pretrain_path = os.path.join(args.pretrain_folder, 'net3d_epoch%s.pth.tar' % args.resume_epoch)
@@ -376,7 +363,7 @@ def main():
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
 
-        # TODO: differentiation control
+        # # TODO: differentiation control
         if i%4 == 0:
             train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
             # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
@@ -389,7 +376,7 @@ def main():
         else:
             train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
             # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-        break
+        # # break
         
         # current_time = time.time()
         if args.rank == 0:
@@ -417,50 +404,51 @@ def main():
                 print('Epoch: %s, Train loss: %s' % (i, train_loss))
                 logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
 
+
             # j = int(i/4)
             # if ((j+1)%10 == 0 or j<20) and i%4 == 3:
             if (i+1)%100 == 0:
                 # save your improved network
                 checkpoint_path = os.path.join(
-                    ckpt_folder, 'resnet_epoch%s.pth.tar' % str(i+1))
-                torch.save(resnet.state_dict(), checkpoint_path)
+                    ckpt_folder, 'swinTransformer_epoch%s.pth.tar' % str(i+1))
+                torch.save(swinTransformer.state_dict(), checkpoint_path)
                 # save whole model and optimizer
                 state = dict(
                     model=model.state_dict(),
                     optimizer=optimizer.state_dict(),
                 )
                 checkpoint_path = os.path.join(
-                    ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
+                    ckpt_folder, 'swin3d_epoch%s.pth.tar' % str(i+1))
                 torch.save(state, checkpoint_path)
 
-    # if args.rank == 0:
-    #     logging.info('Training from ep %d to ep %d finished' %
-    #         (args.start_epoch, args.epochs))
-    #     logging.info('Best epoch: %s' % best_epoch)
+    if args.rank == 0:
+        logging.info('Training from ep %d to ep %d finished' %
+            (args.start_epoch, args.epochs))
+        logging.info('Best epoch: %s' % best_epoch)
 
-    #     # save your improved network
-    #     checkpoint_path = os.path.join(
-    #         ckpt_folder, 'resnet_epoch%s.pth.tar' % str(args.epochs))
-    #     torch.save(resnet.state_dict(), checkpoint_path)
-    #     state = dict(
-    #             model=model.state_dict(),
-    #             optimizer=optimizer.state_dict(),
-    #         )
-    #     checkpoint_path = os.path.join(
-    #         ckpt_folder, 'net3d_epoch%s.pth.tar' % str(args.epochs))
-    #     torch.save(state, checkpoint_path)
+        # save your improved network
+        checkpoint_path = os.path.join(
+            ckpt_folder, 'swinTransformer_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(swinTransformer.state_dict(), checkpoint_path)
+        state = dict(
+                model=model.state_dict(),
+                optimizer=optimizer.state_dict(),
+            )
+        checkpoint_path = os.path.join(
+            ckpt_folder, 'swin3d_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(state, checkpoint_path)
 
 
-    #     plot_list = range(args.start_epoch, args.epochs, 4)
-    #     # plot training process
-    #     plt.plot(plot_list, train_loss_list, label = 'train')
-    #     plt.plot(plot_list, train_loss_list2, label = 'train2')
-    #     plt.plot(plot_list, train_loss_list3, label = 'train3')
-    #     plt.plot(plot_list, train_loss_list4, label = 'train4')
+        plot_list = range(args.start_epoch, args.epochs, 4)
+        # plot training process
+        plt.plot(plot_list, train_loss_list, label = 'train')
+        plt.plot(plot_list, train_loss_list2, label = 'train2')
+        plt.plot(plot_list, train_loss_list3, label = 'train3')
+        plt.plot(plot_list, train_loss_list4, label = 'train4')
 
-    #     plt.legend()
-    #     plt.savefig(os.path.join(
-    #         ckpt_folder, 'epoch%s_bs%s_loss.png' % (args.epochs, args.batch_size)))
+        plt.legend()
+        plt.savefig(os.path.join(
+            ckpt_folder, 'epoch%s_bs%s_loss.png' % (args.epochs, args.batch_size)))
 
 
 

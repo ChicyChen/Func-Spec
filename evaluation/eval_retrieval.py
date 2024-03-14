@@ -233,9 +233,13 @@ def main():
     #     # modify model
     #     # resnet.layer4[1].conv2[0] = torch.nn.Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
 
+    # resnet = models.video.swin3d_t()
+    
     if not args.random and not args.kinetics:
         resnet.load_state_dict(torch.load(ckpt_path)) # load model
     resnet.fc = torch.nn.Identity()
+    # resnet.head = torch.nn.Identity()
+
 
     resnet = nn.DataParallel(resnet)
     resnet = resnet.to(cuda)
@@ -320,3 +324,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse --epoch_num 400

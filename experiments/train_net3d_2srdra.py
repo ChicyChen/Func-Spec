@@ -8,7 +8,7 @@ sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 
-from vicclr import VICCLR
+from vicclr2srdra import VICCLR2SRDRA
 
 import random
 import math
@@ -19,7 +19,7 @@ from torchvision import models
 from torchvision import transforms as T
 import torch.nn.functional as F
 
-from dataloader import get_data_ucf, get_data_k400, get_data_mk200, get_data_mk400, get_data_minik
+from dataloader import get_data_ucf, get_data_k400, get_data_mk200, get_data_mk400, get_data_minik, get_data_ucf_rand_derivative_average
 from torch.utils.data import DataLoader
 
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -36,13 +36,15 @@ from distributed_utils import init_distributed_mode
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --sym_loss --epochs 12
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --epochs 400 --batch_size 64 --sym_loss --base_lr 4.8 --projection 2048 --proj_hidden 2048 --pred_layer 0 --proj_layer 3 --cov_l 0.04 --std_l 1.0 --spa_l 0.0
 
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s.py --sym_loss --epochs 12
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s.py --sym_loss --epochs 400
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--frame_root', default='/data', type=str,
                     help='root folder to store data like UCF101/..., better to put in servers SSD \
                     default path is mounted from data server for the home directory')
 # --frame_root /data
-                    
+
 parser.add_argument('--gpu', default='0,1,2,3,4,5,6,7', type=str)
 
 parser.add_argument('--epochs', default=400, type=int,
@@ -59,13 +61,13 @@ parser.add_argument('--batch_size', default=64, type=int)
 # parser.add_argument('--lr', default=1e-4, type=float, help='learning rate')
 parser.add_argument('--wd', default=1e-6, type=float, help='weight decay')
 
-parser.add_argument('--random', action='store_true')
+parser.add_argument('--random', action='store_true') # default is false
 parser.add_argument('--num_seq', default=2, type=int)
 parser.add_argument('--seq_len', default=8, type=int)
 parser.add_argument('--downsample', default=3, type=int)
 parser.add_argument('--inter_len', default=0, type=int)    # does not need to be positive
 
-parser.add_argument('--sym_loss', action='store_true')
+parser.add_argument('--sym_loss', action='store_true') # default is false
 
 parser.add_argument('--feature_size', default=512, type=int)
 parser.add_argument('--projection', default=2048, type=int)
@@ -75,9 +77,10 @@ parser.add_argument('--proj_layer', default=3, type=int)
 parser.add_argument('--mse_l', default=1.0, type=float)
 parser.add_argument('--std_l', default=1.0, type=float)
 parser.add_argument('--cov_l', default=0.04, type=float)
-parser.add_argument('--infonce', action='store_true')
+parser.add_argument('--infonce', action='store_true') #default is false
 
 parser.add_argument('--base_lr', default=4.8, type=float)
+# parser.add_argument('--base_lr', default=1.2, type=float)
 
 # Running
 parser.add_argument("--num-workers", type=int, default=128)
@@ -100,6 +103,11 @@ parser.add_argument('--mk400', action='store_true')
 parser.add_argument('--minik', action='store_true')
 parser.add_argument('--k400', action='store_true')
 parser.add_argument('--fraction', default=1.0, type=float)
+
+parser.add_argument('--seed', default=233, type = int) # add a seed argument that allows different random initilization of weight
+parser.add_argument('--concat', action='store_true') # default value is false, this arugment decide if we are summing two output from each encoders or concatenating them
+parser.add_argument('--prob_derivative', default = 0.5, type = float)
+parser.add_argument('--prob_average', default = 0.5, type = float)
 
 
 def adjust_learning_rate(args, optimizer, loader, step):
@@ -186,80 +194,75 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
         model.eval()
     total_loss = 0.
     num_batches = len(train_loader)
+    train_loader.sampler.set_epoch(epoch)
 
     # for data in train_loader:
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
-        if step >0:
-            break
         # TODO: be careful with video size
         # N = 2 by default
-        video, label = data # B, N, C, T, H, W
-        print(video.shape)
+        video_rand_derivative, video_rand_average, label = data # B, N, C, T, H, W
         label = label.to(gpu)
-        video = video.to(gpu)
+        video_rand_derivative = video_rand_derivative.to(gpu)
+        video_rand_average = video_rand_average.to(gpu)
 
         # random differentiation step
         # if rand:
-        if random.random() < 0.5:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
+        # if random.random() < 0.5: # should we delete this if for fixed pair?
+        #     video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
 
         # scheduled differentiation step
-        if diff:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-        if mix:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,1,:,:,:,:] = video_diff[:,1,:,:,:,:]
-        if mix2:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,0,:,:,:,:] = video_diff[:,0,:,:,:,:]
 
         lr = adjust_learning_rate(args, optimizer, train_loader, step)
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
-            loss = model(video)
+            loss = model(video_rand_derivative, video_rand_average)
             if train:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
-        total_loss += loss.mean().item() 
-    
+        total_loss += loss.mean().item()
+
     return total_loss/num_batches
 
 
 def main():
-    torch.manual_seed(233)
-    np.random.seed(233)
-
     args = parser.parse_args()
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
 
     torch.backends.cudnn.benchmark = True
     init_distributed_mode(args)
     print(args)
     gpu = torch.device(args.device)
-    
-    model_select = VICCLR
+
+    model_select = VICCLR2SRDRA
 
     if args.infonce:
-        ind_name = 'nce'
+        ind_name = 'nce2s'
     else:
-        ind_name = 'pcn'
+        ind_name = 'pcn2s'
 
     if args.r21d:
         model_name = 'r21d18'
-        resnet = models.video.r2plus1d_18()
+        resnet1 = models.video.r2plus1d_18()
+        resnet2 = models.video.r2plus1d_18()
     elif args.mc3:
         model_name = 'mc318'
-        resnet = models.video.mc3_18()
+        resnet1 = models.video.mc3_18()
+        resnet2 = models.video.mc3_18()
     elif args.s3d:
         model_name = 's3d'
-        resnet = models.video.s3d()
-        resnet.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        resnet1 = models.video.s3d()
+        resnet1.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        resnet2 = models.video.s3d()
+        resnet2.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
     else:
         model_name = 'r3d18'
-        resnet = models.video.r3d_18()
+        resnet1 = models.video.r3d_18()
+        resnet2 = models.video.r3d_18()
 
     if args.k400:
         dataname = 'k400'
@@ -270,11 +273,18 @@ def main():
     elif args.minik:
         dataname = 'minik'
     else:
-        dataname = 'ucf'
-
-    ckpt_folder='/home/yehengz/Func-Spec/checkpoints/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
+        dataname = 'ucf_rd'
     
+    if args.concat:
+        operation = "_concatenation"
+        print('We are using concatenation.')
+    else:
+        operation = "_Summation"
+        print('We are using summation')
+
+    ckpt_folder='/data/checkpoints_yehengz/2streams_rand_derivative_rand_average/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s_prob_derivative%s_prob_average%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.seed, operation, args.prob_derivative, args.prob_average)
+
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
 
@@ -283,10 +293,11 @@ def main():
             os.makedirs(ckpt_folder)
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'net3d_vic_train.log'), level=logging.INFO)
         logging.info('Started')
-   
+
 
     model = model_select(
-        resnet,
+        resnet1,
+        resnet2,
         hidden_layer = 'avgpool',
         feature_size = args.feature_size,
         projection_size = args.projection,
@@ -297,6 +308,7 @@ def main():
         std_l = args.std_l,
         cov_l = args.cov_l,
         infonce = args.infonce,
+        concat = args.concat, # determine if we perform sum or concatenation operation on outputs of f1 and f2
     ).cuda(gpu)
     # sync bn does not works for ode
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -320,7 +332,7 @@ def main():
         optimizer.load_state_dict(ckpt["optimizer"])
 
     assert args.batch_size % args.world_size == 0
-    
+
     per_device_batch_size = args.batch_size // args.world_size
     # print(per_device_batch_size)
 
@@ -333,28 +345,30 @@ def main():
     elif args.minik:
         loader_method = get_data_minik
     else:
-        loader_method = get_data_ucf
+        loader_method = get_data_ucf_rand_derivative_average
 
-    train_loader = loader_method(batch_size=per_device_batch_size, 
-                                mode='train', 
-                                transform_consistent=None, 
+    train_loader = loader_method(batch_size=per_device_batch_size,
+                                mode='train',
+                                transform_consistent=None,
                                 transform_inconsistent=default_transform(),
-                                seq_len=args.seq_len, 
-                                num_seq=args.num_seq, 
+                                seq_len=args.seq_len,
+                                num_seq=args.num_seq,
                                 downsample=args.downsample,
                                 random=args.random,
                                 inter_len=args.inter_len,
                                 frame_root=args.frame_root,
                                 ddp=True,
+                                prob_derivative = args.prob_derivative,
+                                prob_average_frame = args.prob_average,
                                 dim=150,
                                 fraction=args.fraction,
                                 )
-    # test_loader = get_data_ucf(batch_size=per_device_batch_size, 
+    # test_loader = get_data_ucf(batch_size=per_device_batch_size,
     #                             mode='val',
-    #                             transform_consistent=None, 
+    #                             transform_consistent=None,
     #                             transform_inconsistent=default_transform2(),
-    #                             seq_len=args.seq_len, 
-    #                             num_seq=args.num_seq, 
+    #                             seq_len=args.seq_len,
+    #                             num_seq=args.num_seq,
     #                             downsample=args.downsample,
     #                             random=args.random,
     #                             inter_len=args.inter_len,
@@ -363,11 +377,11 @@ def main():
     #                             dim = 240,
     #                             fraction = args.fraction
     #                             )
-    
+
     train_loss_list = []
-    train_loss_list2 = []
-    train_loss_list3 = []
-    train_loss_list4 = []
+    # train_loss_list2 = []
+    # train_loss_list3 = []
+    # train_loss_list4 = []
     epoch_list = range(args.start_epoch, args.epochs)
     lowest_loss = np.inf
     best_epoch = 0
@@ -375,55 +389,85 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
+        # # TODO: differentiation control
+        # if i%4 == 0:
+        #     # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
+        #     train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+        # elif i%4 == 1:
+        #     # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
+        #     train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
+        # elif i%4 == 2:
+        #     # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
+        #     train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
+        # else:
+        #     # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+        #     train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
+        train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
 
-        # TODO: differentiation control
-        if i%4 == 0:
-            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        elif i%4 == 1:
-            train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        elif i%4 == 2:
-            train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-        else:
-            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-        break
-        
         # current_time = time.time()
         if args.rank == 0:
-            if i%4 == 3:
-            # if i%3 == 2:
-            # if i%2 == 1:
-                if train_loss < lowest_loss:
-                    lowest_loss = train_loss
-                    best_epoch = i + 1
+            # if i%4 == 3:
+            # # if i%3 == 2:
+            # # if i%2 == 1:
+            #     if train_loss < lowest_loss:
+            #         lowest_loss = train_loss
+            #         best_epoch = i + 1
+            if train_loss < lowest_loss:
+                lowest_loss = train_loss
 
-            if i%4 == 0:
-                train_loss_list2.append(train_loss2)
-                print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-                logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-            elif i%4 == 1:
-                train_loss_list3.append(train_loss3)
-                print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-                logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-            elif i%4 == 2:
-                train_loss_list4.append(train_loss4)
-                print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-                logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-            else:
-                train_loss_list.append(train_loss)
-                print('Epoch: %s, Train loss: %s' % (i, train_loss))
-                logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+            # if i%4 == 0:
+            #     train_loss_list2.append(train_loss2)
+            #     print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
+            #     logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
+            # elif i%4 == 1:
+            #     train_loss_list3.append(train_loss3)
+            #     print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
+            #     logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
+            # elif i%4 == 2:
+            #     train_loss_list4.append(train_loss4)
+            #     print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
+            #     logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
+            # else:
+            #     train_loss_list.append(train_loss)
+            #     print('Epoch: %s, Train loss: %s' % (i, train_loss))
+            #     logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+            train_loss_list.append(train_loss)
+            print('Epoch: %s, Train loss: %s' % (i, train_loss))
+            logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
 
-            # j = int(i/4)
-            # if ((j+1)%10 == 0 or j<20) and i%4 == 3:
+
+
+            
             if (i+1)%100 == 0:
                 # save your improved network
+                # save the weight of encoder1
+                checkpoint_path1 = os.path.join(
+                    ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(i+1))
+                torch.save(resnet1.state_dict(), checkpoint_path1)
+                # save the weight of encoder2
+                checkpoint_path2 = os.path.join(
+                    ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(i+1))
+                torch.save(resnet2.state_dict(), checkpoint_path2)
+
+                # save whole model and optimizer
+                state = dict(
+                    model=model.state_dict(),
+                    optimizer=optimizer.state_dict(),
+                )
                 checkpoint_path = os.path.join(
-                    ckpt_folder, 'resnet_epoch%s.pth.tar' % str(i+1))
-                torch.save(resnet.state_dict(), checkpoint_path)
+                    ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
+                torch.save(state, checkpoint_path)
+            elif (i+1)<100 and (i+1)%10 == 0: # save weight at epoch 10, 20, 30, 40, 50, 60, 70, 80, 90
+                # save your improved network
+                # save the weight of encoder1
+                checkpoint_path1 = os.path.join(
+                    ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(i+1))
+                torch.save(resnet1.state_dict(), checkpoint_path1)
+                # save the weight of encoder2
+                checkpoint_path2 = os.path.join(
+                    ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(i+1))
+                torch.save(resnet2.state_dict(), checkpoint_path2)
+
                 # save whole model and optimizer
                 state = dict(
                     model=model.state_dict(),
@@ -433,36 +477,52 @@ def main():
                     ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
                 torch.save(state, checkpoint_path)
 
-    # if args.rank == 0:
-    #     logging.info('Training from ep %d to ep %d finished' %
-    #         (args.start_epoch, args.epochs))
-    #     logging.info('Best epoch: %s' % best_epoch)
 
-    #     # save your improved network
-    #     checkpoint_path = os.path.join(
-    #         ckpt_folder, 'resnet_epoch%s.pth.tar' % str(args.epochs))
-    #     torch.save(resnet.state_dict(), checkpoint_path)
-    #     state = dict(
-    #             model=model.state_dict(),
-    #             optimizer=optimizer.state_dict(),
-    #         )
-    #     checkpoint_path = os.path.join(
-    #         ckpt_folder, 'net3d_epoch%s.pth.tar' % str(args.epochs))
-    #     torch.save(state, checkpoint_path)
+    if args.rank == 0:
+        logging.info('Training from ep %d to ep %d finished' %
+            (args.start_epoch, args.epochs))
+        logging.info('Best epoch: %s' % best_epoch)
+
+        # save your improved network
+        # save the weight of encoder1
+        checkpoint_path1 = os.path.join(
+            ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(resnet1.state_dict(), checkpoint_path1)
+        # save the weight of encoder2
+        checkpoint_path2 = os.path.join(
+            ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(resnet2.state_dict(), checkpoint_path2)
+        state = dict(
+                model=model.state_dict(),
+                optimizer=optimizer.state_dict(),
+            )
+        checkpoint_path = os.path.join(
+            ckpt_folder, 'net3d_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(state, checkpoint_path)
 
 
-    #     plot_list = range(args.start_epoch, args.epochs, 4)
-    #     # plot training process
-    #     plt.plot(plot_list, train_loss_list, label = 'train')
-    #     plt.plot(plot_list, train_loss_list2, label = 'train2')
-    #     plt.plot(plot_list, train_loss_list3, label = 'train3')
-    #     plt.plot(plot_list, train_loss_list4, label = 'train4')
+        plot_list = range(args.start_epoch, args.epochs)
+        # plot training process
+        plt.plot(plot_list, train_loss_list, label = 'train')
+        # plt.plot(plot_list, train_loss_list2, label = 'train2')
+        # plt.plot(plot_list, train_loss_list3, label = 'train3')
+        # plt.plot(plot_list, train_loss_list4, label = 'train4')
 
-    #     plt.legend()
-    #     plt.savefig(os.path.join(
-    #         ckpt_folder, 'epoch%s_bs%s_loss.png' % (args.epochs, args.batch_size)))
+        plt.legend()
+        plt.savefig(os.path.join(
+            ckpt_folder, 'epoch%s_bs%s_loss.png' % (args.epochs, args.batch_size)))
 
 
 
 if __name__ == '__main__':
     main()
+
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srdra.py --sym_loss --infonce --epochs 400 --seed 233 --prob_derivative 0.25 --prob_average 0.25
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233 --prob_derivative 0.75 --prob_average 0.75
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 233 --concat
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 42
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 42 --concat    
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 3407
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2srd.py --sym_loss --infonce --epochs 400 --seed 3407 --concat   
+    
+# path: /data/checkpoints_yehengz/2streams_rand_derivative/ucf_rd1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation_prob0.2
