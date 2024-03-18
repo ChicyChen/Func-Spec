@@ -40,11 +40,14 @@ resnet.eval()
 encoder = NetHook(resnet, layer = -2)
 encoder = encoder.to(cuda)
 encoder.eval()
+transforms = videofmri_transform()
 
 # process video data used in fmri recording
-frame_root = "/data/3/human/Human_Visual_Experiments/video_fmri_dataset/stimuli/frames"
+# frame_root = "/data/3/human/Human_Visual_Experiments/video_fmri_dataset/stimuli/frames" # without downsampling, 30 Hz
+frame_root = "/data/3/human/Human_Visual_Experiments/movie_stimuli/sections-8min-18/Concatenated_sections/movie_frame_10Hz/section1" # with downsampling, 10 Hz
 num_seg = 18
-num_images = 14400
+# num_images = 14400
+num_images = 15
 transform_inconsistent=default_transform()
 # loop through 18 segs
 frame_folder = "/data/3/human/Human_Visual_Experiments/video_fmri_dataset/stimuli/frames/seg1"
@@ -52,16 +55,23 @@ representation_list = []
 for i in range(num_images - 8):
     # construct clip and preprocess
     idx_block = range(i, i+8)
-    clip = [pil_loader(os.path.join(frame_folder, '/im-'+str(i+1)+'.jpg')) for i in idx_block]
-    clip = videofmri_transform(clip) # apply same transform
+    clip = [pil_loader(os.path.join(frame_folder, 'im-'+str(i+1)+'.jpg')) for i in idx_block]
+    clip = transforms(clip) # apply same transform
+    clip = torch.stack(clip, 0) # T, C, H, W
+    clip = clip.permute(1,0,2,3) # C, T, H, W
+    clip = clip.unsqueeze(0) # 1, C, T, H, W: [1, 3, 8, 112, 112]
+    # print(clip.size())
     clip = clip.to(cuda)
     representation = encoder(clip)
     representation_list.append(representation)
-features = torch.vstack(representation_list) # T, D
+    # print(len(representation_list))
+features = torch.vstack(representation_list) # T, D: T, 512
+# print(features.size())
 torch.save(features, 'features.pt')
 
 # PCA reduction
 n_components = 3
 pca = PCA(n_components)
-features_pca = pca.fit_transform(features)
+features_pca = pca.fit_transform(features.cpu().detach().numpy())
 torch.save(features_pca, 'features_pca.pt') # T, d
+# print(features_pca.shape)
