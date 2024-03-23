@@ -35,6 +35,7 @@ class SWINCLR(nn.Module):
         std_l = 1.0,
         cov_l = 0.04,
         infonce = False,
+        temperature = 0.1
     ):
         super().__init__()
 
@@ -43,7 +44,7 @@ class SWINCLR(nn.Module):
 
         if proj_layer > 0:
             create_mlp_fn = MLP
-            self.projector = create_mlp_fn(768, projection_size, projection_hidden_size, proj_layer)
+            self.projector = MLP(feature_size, projection_size, projection_hidden_size, proj_layer)
         else:
             self.projector = nn.Identity()
 
@@ -54,6 +55,7 @@ class SWINCLR(nn.Module):
         self.cov_l = cov_l
 
         self.infonce = infonce
+        self.temperature = temperature
 
     def loss_fn(self, x, y):
         # x: B, N-1, D
@@ -63,7 +65,7 @@ class SWINCLR(nn.Module):
         y = y.reshape(B*M, D)
 
         if self.infonce:
-            loss = infoNCE(x, y, temperature=0.1)
+            loss = infoNCE(x, y, temperature=self.temperature)
         else:
             loss = vic_reg_nonorm_loss(x, y, self.mse_l, self.std_l, self.cov_l)
 
@@ -82,14 +84,14 @@ class SWINCLR(nn.Module):
         # print(self.encoder(x.view(B*N, C, T, H, W)).size())
         hidden1 = flatten(self.encoder(x1.view(B, C, T, H, W))) # encoder forward
         hidden2 = flatten(self.encoder(x2.view(B, C, T, H, W)))
-
         # gt_z_all = self.projector(hidden) # projector forward
         # gt_z_all = gt_z_all.reshape(B, N, -1) # B, N, D
 
         gt_z_all1 = self.projector(hidden1) # projector1 forward for output of encoder1
         gt_z_all2 = self.projector(hidden2) # projector2 forward for output of encoder2
-        gt_z_all1 = gt_z_all1.reshape(B, N, -1) # B, N, D
-        gt_z_all2 = gt_z_all2.reshape(B, N, -1) # B, N, D
+
+        gt_z_all1 = gt_z_all1.reshape(B, N-1, -1) # B, N-1, D
+        gt_z_all2 = gt_z_all2.reshape(B, N-1, -1) # B, N-1, D
 
 
         # no predictor, VICReg or SimCLR

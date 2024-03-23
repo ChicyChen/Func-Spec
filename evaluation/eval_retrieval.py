@@ -68,12 +68,13 @@ parser.add_argument('--img_size', default=112, type=int)
 parser.add_argument('--r21d', action='store_true') # default is False
 parser.add_argument('--mc3', action='store_true') # default is False
 parser.add_argument('--s3d', action='store_true') # default is False
+parser.add_argument('--swin', action='store_true') # default is False
 
 
 parser.add_argument('--diff', action='store_true') # default is False
 
 parser.add_argument('--seed', default = 233, type = int) # seed used during training
-parser.add_argument('--which_encoder', default = 1, type = int) # default is 1, the only other option is 2
+parser.add_argument('--which_encoder', default = 0, type = int) # default is 1, the other option is 2; if is 0, then use the basic simclr structure, which has only on encoder
 
 # python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400
 # python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --which_encoder 2
@@ -179,10 +180,20 @@ def main():
     args = parser.parse_args()
 
     ckpt_folder = args.ckpt_folder
-    if args.which_encoder == 1:
-        ckpt_path = os.path.join(ckpt_folder, 'resnet1_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
-    elif args.which_encoder == 2:
-        ckpt_path = os.path.join(ckpt_folder, 'resnet2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+    if args.swin:
+        if args.which_encoder == 0:
+            ckpt_path = os.path.join(ckpt_folder, 'swinTransformer_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+        elif args.which_encoder == 1:
+            ckpt_path = os.path.join(ckpt_folder, 'swinTransformer1_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+        elif args.which_encoder == 2:
+            ckpt_path = os.path.join(ckpt_folder, 'swinTransformer2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+    else:
+        if args.which_encoder == 0:
+            ckpt_path = os.path.join(ckpt_folder, 'resnet_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+        elif args.which_encoder == 1:
+            ckpt_path = os.path.join(ckpt_folder, 'resnet1_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+        elif args.which_encoder == 2:
+            ckpt_path = os.path.join(ckpt_folder, 'resnet2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
 
     if not args.hmdb:
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'ucf_retrieval.log'), level=logging.INFO)
@@ -198,31 +209,35 @@ def main():
     cuda = torch.device('cuda')
 
 
-    if args.r21d:
-        model_name = 'r21d18'
-        if not args.kinetics:
-            resnet = models.video.r2plus1d_18()
-        else:
-            resnet = models.video.r2plus1d_18(pretrained=True)
-    elif args.mc3:
-        model_name = 'mc318'
-        if not args.kinetics:
-            resnet = models.video.mc3_18()
-        else:
-            resnet = models.video.mc3_18(pretrained=True)
-    elif args.s3d:
-        model_name = 's3d'
-        if not args.kinetics:
-            resnet = models.video.s3d()
-        else:
-            resnet = models.video.s3d(pretrained=True)
-        resnet.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+    if args.swin:
+        encoder = models.video.swin3d_t()
     else:
-        model_name = 'r3d18'
-        if not args.kinetics:
-            resnet = models.video.r3d_18()
+
+        if args.r21d:
+            model_name = 'r21d18'
+            if not args.kinetics:
+                encoder = models.video.r2plus1d_18()
+            else:
+                encoder = models.video.r2plus1d_18(pretrained=True)
+        elif args.mc3:
+            model_name = 'mc318'
+            if not args.kinetics:
+                encoder = models.video.mc3_18()
+            else:
+                encoder = models.video.mc3_18(pretrained=True)
+        elif args.s3d:
+            model_name = 's3d'
+            if not args.kinetics:
+                encoder = models.video.s3d()
+            else:
+                encoder = models.video.s3d(pretrained=True)
+            encoder.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
         else:
-            resnet = models.video.r3d_18(pretrained=True)
+            model_name = 'r3d18'
+            if not args.kinetics:
+                encoder = models.video.r3d_18()
+            else:
+                encoder = models.video.r3d_18(pretrained=True)
 
     # if not args.kinetics:
     #     resnet = models.video.r3d_18()
@@ -233,17 +248,19 @@ def main():
     #     # modify model
     #     # resnet.layer4[1].conv2[0] = torch.nn.Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
 
-    # resnet = models.video.swin3d_t()
     
     if not args.random and not args.kinetics:
-        resnet.load_state_dict(torch.load(ckpt_path)) # load model
-    resnet.fc = torch.nn.Identity()
-    # resnet.head = torch.nn.Identity()
+        encoder.load_state_dict(torch.load(ckpt_path)) # load model
+    if args.swin:
+        encoder.head = torch.nn.Identity()
+    else:
+
+        encoder.fc = torch.nn.Identity()
 
 
-    resnet = nn.DataParallel(resnet)
-    resnet = resnet.to(cuda)
-    resnet.eval()
+    encoder = nn.DataParallel(encoder)
+    encoder = encoder.to(cuda)
+    encoder.eval()
 
     if args.img_size == 224:
         dim = 240
@@ -310,14 +327,14 @@ def main():
     # random weight
     if args.random:
         logging.info(f"k-nn accuracy performed with random weight\n")
-        perform_knn(resnet, train_loader, test_loader, args.k, args.diff)
+        perform_knn(encoder, train_loader, test_loader, args.k, args.diff)
     elif args.kinetics:
         logging.info(f"k-nn accuracy performed with kinetics weight\n")
-        perform_knn(resnet, train_loader, test_loader, args.k, args.diff)
+        perform_knn(encoder, train_loader, test_loader, args.k, args.diff)
     else:
         # after training
         logging.info(f"k-nn accuracy performed after ssl\n")
-        perform_knn(resnet, train_loader, test_loader, args.k, args.diff)
+        perform_knn(encoder, train_loader, test_loader, args.k, args.diff)
 
 
 
@@ -325,6 +342,18 @@ def main():
 if __name__ == '__main__':
     main()
 
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.0001_wd1e-06_ds3_sl8_nw_randFalse --epoch_num 100 --gpu '7' --swin
 
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.0005_wd1e-06_ds3_sl8_nw_randFalse --epoch_num 100 --gpu '7' --swin
 
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse --epoch_num 400
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.0001_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.2 --epoch_num 100 --gpu '7' --swin
+
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.0001_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.3 --epoch_num 100 --gpu '7' --swin
+
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.0001_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size4096_tau0.1 --epoch_num 100 --gpu '7' --swin
+    
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr1e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1 --epoch_num 100 --gpu '7' --swin
+
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.0002_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1 --epoch_num 100 --gpu '7' --swin
+
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.0003_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1 --epoch_num 100 --gpu '7' --swin

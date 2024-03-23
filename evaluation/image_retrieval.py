@@ -45,6 +45,7 @@ parser.add_argument('--num_seq', default=10, type=int)
 parser.add_argument('--seq_len', default=16, type=int)
 parser.add_argument('--downsample', default=4, type=int)
 parser.add_argument('--inter_len', default=0, type=int)
+parser.add_argument('--img_size', default=112, type=int)
 # parser.add_argument('--num_aug', default=1, type=int)
 
 # parser.add_argument('--img_size', default=112, type=int)
@@ -56,19 +57,29 @@ parser.add_argument('--s3d', action='store_true')
 parser.add_argument('--diff', action='store_true')
 # parser.add_argument('--which_mode', default='train', type = str)
 parser.add_argument('--which_encoder', default = 1, type = int) # default is 1, the only other option is 2
-parser.add_argument('--img_num', default=1, type = int) # the value of T in the shape of input tensor
+parser.add_argument('--img_num', default=8, type = int) # the value of T in the shape of input tensor
 parser.add_argument('--knn_k', default=10, type = int)
 parser.add_argument('--knn_t', default=0.07, type = float)
 parser.add_argument('--weighted_knn', action='store_true') # default is false
 
+parser.add_argument('--swin', action='store_true') # default is false
+
+
 # python evaluation/eval_retrieval.py --ckpt_folder checkpoints/ucf1.0_pcn_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse --epoch_num 400
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_2s/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupFalse_projection_size2048_tau0.1_epoch_num400_operation_summation --epoch_num 400 --swin --gpu '7'
+# python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_2s/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupFalse_projection_size2048_tau0.1_epoch_num400_operation_summation --epoch_num 400 --swin --gpu '7' --which_encoder 2
 
 def test_transform():
     transform = transforms.Compose([
-        transforms.RandomResizedCrop(32),
+        transforms.Resize(size = 128),
+        transforms.RandomResizedCrop(112),
+        transforms.Resize(size = (112,112)),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
     return transform
+
+
+
 
 
 def extract_features(loader, model, test=True):
@@ -274,10 +285,16 @@ def main():
     args = parser.parse_args()
 
     ckpt_folder = args.ckpt_folder
-    if args.which_encoder == 1:
-        ckpt_path = os.path.join(ckpt_folder, 'resnet1_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
-    elif args.which_encoder == 2:
-        ckpt_path = os.path.join(ckpt_folder, 'resnet2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+    if args.swin:
+        if args.which_encoder == 1:
+            ckpt_path = os.path.join(ckpt_folder, 'swinTransformer1_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+        elif args.which_encoder == 2:
+            ckpt_path = os.path.join(ckpt_folder, 'swinTransformer2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+    else:
+        if args.which_encoder == 1:
+            ckpt_path = os.path.join(ckpt_folder, 'resnet1_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+        elif args.which_encoder == 2:
+            ckpt_path = os.path.join(ckpt_folder, 'resnet2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
 
     if args.cifar10:
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'corrected_cifar10_knn.log'), level=logging.INFO)
@@ -306,32 +323,34 @@ def main():
     global cuda
     cuda = torch.device('cuda')
 
-
-    if args.r21d:
-        model_name = 'r21d18'
-        if not args.kinetics:
-            resnet = models.video.r2plus1d_18()
+    if args.swin:
+        encoder = models.video.swin3d_t()
+    else: 
+        if args.r21d:
+            model_name = 'r21d18'
+            if not args.kinetics:
+                encoder = models.video.r2plus1d_18()
+            else:
+                encoder = models.video.r2plus1d_18(pretrained=True)
+        elif args.mc3:
+            model_name = 'mc318'
+            if not args.kinetics:
+                encoder = models.video.mc3_18()
+            else:
+                encoder = models.video.mc3_18(pretrained=True)
+        elif args.s3d:
+            model_name = 's3d'
+            if not args.kinetics:
+                encoder = models.video.s3d()
+            else:
+                encoder = models.video.s3d(pretrained=True)
+            encoder.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
         else:
-            resnet = models.video.r2plus1d_18(pretrained=True)
-    elif args.mc3:
-        model_name = 'mc318'
-        if not args.kinetics:
-            resnet = models.video.mc3_18()
-        else:
-            resnet = models.video.mc3_18(pretrained=True)
-    elif args.s3d:
-        model_name = 's3d'
-        if not args.kinetics:
-            resnet = models.video.s3d()
-        else:
-            resnet = models.video.s3d(pretrained=True)
-        resnet.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
-    else:
-        model_name = 'r3d18'
-        if not args.kinetics:
-            resnet = models.video.r3d_18()
-        else:
-            resnet = models.video.r3d_18(pretrained=True)
+            model_name = 'r3d18'
+            if not args.kinetics:
+                encoder = models.video.r3d_18()
+            else:
+                encoder = models.video.r3d_18(pretrained=True)
 
     # if not args.kinetics:
     #     resnet = models.video.r3d_18()
@@ -343,12 +362,15 @@ def main():
     #     # resnet.layer4[1].conv2[0] = torch.nn.Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
 
     if not args.random and not args.kinetics:
-        resnet.load_state_dict(torch.load(ckpt_path)) # load model
-    resnet.fc = torch.nn.Identity()
+        encoder.load_state_dict(torch.load(ckpt_path)) # load model
+    if args.swin:
+        encoder.head = torch.nn.Identity()
+    else:
+        encoder.fc = torch.nn.Identity()
 
-    resnet = nn.DataParallel(resnet)
-    resnet = resnet.to(cuda)
-    resnet.eval()
+    encoder = nn.DataParallel(encoder)
+    encoder = encoder.to(cuda)
+    encoder.eval()
 
     # if args.img_size == 224:
     #     dim = 240
@@ -387,22 +409,22 @@ def main():
     if args.random:
         logging.info(f"k-nn accuracy performed with random weight\n")
         if args.weighted_knn:
-            test(resnet, train_loader, test_loader, args)
+            test(encoder, train_loader, test_loader, args)
         else:
-            perform_knn(resnet, train_loader, test_loader, args.k)
+            perform_knn(encoder, train_loader, test_loader, args.k)
     elif args.kinetics:
         logging.info(f"k-nn accuracy performed with kinetics weight\n")
         if args.weighted_knn:
-            test(resnet, train_loader, test_loader, args)
+            test(encoder, train_loader, test_loader, args)
         else:
-            perform_knn(resnet, train_loader, test_loader, args.k)
+            perform_knn(encoder, train_loader, test_loader, args.k)
     else:
         # after training
         logging.info(f"k-nn accuracy performed after ssl\n")
         if args.weighted_knn:
-            test(resnet, train_loader, test_loader, args)
+            test(encoder, train_loader, test_loader, args)
         else:
-            perform_knn(resnet, train_loader, test_loader, args.k)
+            perform_knn(encoder, train_loader, test_loader, args.k)
 
 
 

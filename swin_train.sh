@@ -1,0 +1,3 @@
+#!/bin/bash
+torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 4e-4 --wd 0.025 --warm_up --temperature 0.1 --batch_size 128 --projection 256 --proj_hidden 4096
+python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs128_lr0.0004_wd0.025_ds3_sl8_nw_randFalse_warmupTrue_projection_size256_tau0.1_epoch_num100 --epoch_num 100 --gpu '3' --swin 

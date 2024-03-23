@@ -8,7 +8,7 @@ sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 
-from swinclr import SWINCLR
+from swinclr2s import SWINCLR2S
 
 import random
 import math
@@ -33,7 +33,7 @@ from augmentation import *
 from distributed_utils import init_distributed_mode
 
 # python -m torch.distributed.launch --nproc_per_node=8 experiments/train_net3d.py --sym_loss
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --sym_loss --epochs 12
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --epochs 100 --base_lr 1e-4
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --epochs 400 --batch_size 64 --sym_loss --base_lr 4.8 --projection 2048 --proj_hidden 2048 --pred_layer 0 --proj_layer 3 --cov_l 0.04 --std_l 1.0 --spa_l 0.0
 
 parser = argparse.ArgumentParser()
@@ -67,7 +67,8 @@ parser.add_argument('--inter_len', default=0, type=int)    # does not need to be
 
 parser.add_argument('--sym_loss', action='store_true')
 
-parser.add_argument('--feature_size', default=512, type=int)
+
+parser.add_argument('--feature_size', default=768, type=int)
 parser.add_argument('--projection', default=2048, type=int)
 parser.add_argument('--proj_hidden', default=2048, type=int)
 parser.add_argument('--proj_layer', default=3, type=int)
@@ -75,9 +76,12 @@ parser.add_argument('--proj_layer', default=3, type=int)
 parser.add_argument('--mse_l', default=1.0, type=float)
 parser.add_argument('--std_l', default=1.0, type=float)
 parser.add_argument('--cov_l', default=0.04, type=float)
-parser.add_argument('--infonce', action='store_true')
+parser.add_argument('--infonce', action='store_true') # default is false
+parser.add_argument('--temperature', default = 0.1, type = float)
 
 parser.add_argument('--base_lr', default=4.8, type=float)
+parser.add_argument('--warm_up', action = "store_true") #default value is false
+parser.add_argument('--concat', action = 'store_true') # default value is false
 
 # Running
 parser.add_argument("--num-workers", type=int, default=128)
@@ -104,9 +108,11 @@ parser.add_argument('--fraction', default=1.0, type=float)
 
 def adjust_learning_rate(args, optimizer, loader, step):
     max_steps = args.epochs * len(loader)
-    warmup_steps = 10 * len(loader)
-    # warmup_steps = 0
-    base_lr = args.base_lr * args.batch_size / 256
+    if args.warm_up:
+        warmup_steps = 5 * len(loader)
+    else:
+        warmup_steps = 0
+    base_lr = args.base_lr * args.batch_size*args.world_size / 512.0
     if step < warmup_steps:
         lr = base_lr * step / warmup_steps
     else:
@@ -196,10 +202,6 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
         label = label.to(gpu)
         video = video.to(gpu)
 
-        # random differentiation step
-        # if rand:
-        if random.random() < 0.5:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
 
         # scheduled differentiation step
         if diff:
@@ -238,7 +240,7 @@ def main():
     print(args)
     gpu = torch.device(args.device)
     
-    model_select = SWINCLR
+    model_select = SWINCLR2S
 
     if args.infonce:
         ind_name = 'nce'
@@ -246,7 +248,9 @@ def main():
         ind_name = 'pcn'
 
     model_name = 'swin3dtiny'
-    swinTransformer = models.video.swin3d_t()
+
+    swinTransformer1 = models.video.swin3d_t()
+    swinTransformer2 = models.video.swin3d_t()
 
     if args.k400:
         dataname = 'k400'
@@ -259,8 +263,13 @@ def main():
     else:
         dataname = 'ucf'
 
-    ckpt_folder='/data/checkpoints_yehengz/swin/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
+    if args.concat:
+        operation = "_concatenation"
+    else:
+        operation = "_summation"
+
+    ckpt_folder='/data/checkpoints_yehengz/swin_2s/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_warmup%s_projection_size%s_tau%s_epoch_num%s_operation%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.warm_up, args.projection, args.temperature, args.epochs, operation)
     
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
@@ -273,7 +282,8 @@ def main():
    
 
     model = model_select(
-        swinTransformer,
+        swinTransformer1,
+        swinTransformer2,
         hidden_layer = 'avgpool',
         feature_size = args.feature_size,
         projection_size = args.projection,
@@ -284,6 +294,8 @@ def main():
         std_l = args.std_l,
         cov_l = args.cov_l,
         infonce = args.infonce,
+        concat = args.concat,
+        temperature = args.temperature,
     ).cuda(gpu)
     # sync bn does not works for ode
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -291,7 +303,7 @@ def main():
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu], find_unused_parameters=True)
 
     # optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    optimizer = torch.optim.AdamW(model.parameters(), eps=1e-8, lr=4.8, weight_decay=args.wd)
+    optimizer = torch.optim.AdamW(model.parameters(), eps=1e-8, lr=args.base_lr, weight_decay=args.wd)
     # optimizer = LARS(
     #     model.parameters(),
     #     lr=0,
@@ -362,56 +374,31 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
-
-        # # TODO: differentiation control
-        if i%4 == 0:
-            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        elif i%4 == 1:
-            train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        elif i%4 == 2:
-            train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-        else:
-            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-        # # break
+        train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
         
         # current_time = time.time()
         if args.rank == 0:
-            if i%4 == 3:
-            # if i%3 == 2:
-            # if i%2 == 1:
-                if train_loss < lowest_loss:
-                    lowest_loss = train_loss
-                    best_epoch = i + 1
+            if train_loss < lowest_loss:
+                lowest_loss = train_loss
+                best_epoch = i + 1
 
-            if i%4 == 0:
-                train_loss_list2.append(train_loss2)
-                print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-                logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-            elif i%4 == 1:
-                train_loss_list3.append(train_loss3)
-                print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-                logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-            elif i%4 == 2:
-                train_loss_list4.append(train_loss4)
-                print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-                logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-            else:
-                train_loss_list.append(train_loss)
-                print('Epoch: %s, Train loss: %s' % (i, train_loss))
-                logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+            train_loss_list.append(train_loss)
+            print('Epoch: %s, Train loss: %s' % (i, train_loss))
+            logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
 
 
             # j = int(i/4)
             # if ((j+1)%10 == 0 or j<20) and i%4 == 3:
             if (i+1)%100 == 0:
                 # save your improved network
-                checkpoint_path = os.path.join(
-                    ckpt_folder, 'swinTransformer_epoch%s.pth.tar' % str(i+1))
-                torch.save(swinTransformer.state_dict(), checkpoint_path)
+                checkpoint_path1 = os.path.join(
+                    ckpt_folder, 'swinTransformer1_epoch%s.pth.tar' % str(args.epochs))
+                torch.save(swinTransformer1.state_dict(), checkpoint_path1)
+
+                checkpoint_path2 = os.path.join(
+                    ckpt_folder, 'swinTransformer2_epoch%s.pth.tar' % str(args.epochs))
+                torch.save(swinTransformer2.state_dict(), checkpoint_path2)
+                
                 # save whole model and optimizer
                 state = dict(
                     model=model.state_dict(),
@@ -427,9 +414,14 @@ def main():
         logging.info('Best epoch: %s' % best_epoch)
 
         # save your improved network
-        checkpoint_path = os.path.join(
-            ckpt_folder, 'swinTransformer_epoch%s.pth.tar' % str(args.epochs))
-        torch.save(swinTransformer.state_dict(), checkpoint_path)
+        checkpoint_path1 = os.path.join(
+            ckpt_folder, 'swinTransformer1_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(swinTransformer1.state_dict(), checkpoint_path1)
+
+        checkpoint_path2 = os.path.join(
+            ckpt_folder, 'swinTransformer2_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(swinTransformer2.state_dict(), checkpoint_path2)
+
         state = dict(
                 model=model.state_dict(),
                 optimizer=optimizer.state_dict(),
@@ -439,12 +431,9 @@ def main():
         torch.save(state, checkpoint_path)
 
 
-        plot_list = range(args.start_epoch, args.epochs, 4)
+        plot_list = range(args.start_epoch, args.epochs)
         # plot training process
         plt.plot(plot_list, train_loss_list, label = 'train')
-        plt.plot(plot_list, train_loss_list2, label = 'train2')
-        plt.plot(plot_list, train_loss_list3, label = 'train3')
-        plt.plot(plot_list, train_loss_list4, label = 'train4')
 
         plt.legend()
         plt.savefig(os.path.join(
@@ -454,3 +443,13 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_2s.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --temperature 0.1 --seq_len 16 --downsample 2 --warm_up
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_2s.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --temperature 0.1 --seq_len 16 --downsample 2 --warm_up
+    
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_2s/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupFalse_projection_size2048_tau0.1_epoch_num400_operation_summation --epoch_num 400 --gpu '5' --swin --which_encoder 1
+# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_2s/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupFalse_projection_size2048_tau0.1_epoch_num400_operation_summation --epoch_num 400 --gpu '6' --swin --which_encoder 2
+# python evaluation/eval_retrieval_2encoders --ckpt_folder /data/checkpoints_yehengz/swin_2s/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupFalse_projection_size2048_tau0.1_epoch_num400_operation_summation --epoch_num 400 --gpu '7' --swin 
+# python evaluation/eval_retrieval_2encoders --ckpt_folder /data/checkpoints_yehengz/swin_2s/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupFalse_projection_size2048_tau0.1_epoch_num400_operation_summation --epoch_num 400 --gpu '5' --swin --concat
