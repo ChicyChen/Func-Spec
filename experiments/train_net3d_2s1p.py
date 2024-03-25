@@ -8,7 +8,7 @@ sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 
-from vicclr2s1prdra import VICCLR2S1PRDRA
+from vicclr2s1p import VICCLR2S1P
 
 import random
 import math
@@ -19,7 +19,7 @@ from torchvision import models
 from torchvision import transforms as T
 import torch.nn.functional as F
 
-from dataloader import get_data_ucf, get_data_k400, get_data_mk200, get_data_mk400, get_data_minik, get_data_ucf_rand_derivative_average
+from dataloader import get_data_ucf, get_data_k400, get_data_mk200, get_data_mk400, get_data_minik
 from torch.utils.data import DataLoader
 
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -37,7 +37,7 @@ from distributed_utils import init_distributed_mode
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --epochs 400 --batch_size 64 --sym_loss --base_lr 4.8 --projection 2048 --proj_hidden 2048 --pred_layer 0 --proj_layer 3 --cov_l 0.04 --std_l 1.0 --spa_l 0.0
 
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s.py --sym_loss --epochs 12
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s.py --sym_loss --epochs 400
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1p.py --sym_loss --infonce
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--frame_root', default='/data', type=str,
@@ -106,8 +106,6 @@ parser.add_argument('--fraction', default=1.0, type=float)
 
 parser.add_argument('--seed', default=233, type = int) # add a seed argument that allows different random initilization of weight
 parser.add_argument('--concat', action='store_true') # default value is false, this arugment decide if we are summing two output from each encoders or concatenating them
-parser.add_argument('--prob_derivative', default = 0.5, type = float)
-parser.add_argument('--prob_average', default = 0.5, type = float)
 
 
 def adjust_learning_rate(args, optimizer, loader, step):
@@ -194,16 +192,14 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
         model.eval()
     total_loss = 0.
     num_batches = len(train_loader)
-    train_loader.sampler.set_epoch(epoch)
 
     # for data in train_loader:
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
         # TODO: be careful with video size
         # N = 2 by default
-        video_rand_derivative, video_rand_average, label = data # B, N, C, T, H, W
+        video, label = data # B, N, C, T, H, W
         label = label.to(gpu)
-        video_rand_derivative = video_rand_derivative.to(gpu)
-        video_rand_average = video_rand_average.to(gpu)
+        video = video.to(gpu)
 
         # random differentiation step
         # if rand:
@@ -211,12 +207,22 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
         #     video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
 
         # scheduled differentiation step
+        if diff: # The shape of video is [B, N, C, T, H, W]
+            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
+        if mix:
+            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
+            video = video[:,:,:,:-1,:,:]
+            video[:,1,:,:,:,:] = video_diff[:,1,:,:,:,:]
+        if mix2:
+            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
+            video = video[:,:,:,:-1,:,:]
+            video[:,0,:,:,:,:] = video_diff[:,0,:,:,:,:]
 
         lr = adjust_learning_rate(args, optimizer, train_loader, step)
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
-            loss = model(video_rand_derivative, video_rand_average)
+            loss = model(video)
             if train:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -231,14 +237,14 @@ def main():
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    random.seed(args.seed)
+
 
     torch.backends.cudnn.benchmark = True
     init_distributed_mode(args)
     print(args)
     gpu = torch.device(args.device)
 
-    model_select = VICCLR2S1PRDRA
+    model_select = VICCLR2S1P
 
     if args.infonce:
         ind_name = 'nce2s'
@@ -273,19 +279,19 @@ def main():
     elif args.minik:
         dataname = 'minik'
     else:
-        dataname = 'ucf_rd'
+        dataname = 'ucf'
     
     if args.concat:
         operation = "_concatenation"
-        feature_size = args.feature_size * 2
+        feature_size = args.feature_size*2
         print('We are using concatenation.')
     else:
-        operation = "_Summation"
+        operation = "_summation"
         feature_size = args.feature_size
         print('We are using summation')
 
-    ckpt_folder='/data/checkpoints_yehengz/2streams1proj_rand_derivative_rand_average/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_epochs%s_seed%s_operation%s_prob_derivative%s_prob_average%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.epochs, args.seed, operation, args.prob_derivative, args.prob_average)
+    ckpt_folder='/data/checkpoints_yehengz/2streams1proj/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_operation%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.seed, operation)
 
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
@@ -347,7 +353,7 @@ def main():
     elif args.minik:
         loader_method = get_data_minik
     else:
-        loader_method = get_data_ucf_rand_derivative_average
+        loader_method = get_data_ucf
 
     train_loader = loader_method(batch_size=per_device_batch_size,
                                 mode='train',
@@ -360,8 +366,6 @@ def main():
                                 inter_len=args.inter_len,
                                 frame_root=args.frame_root,
                                 ddp=True,
-                                prob_derivative = args.prob_derivative,
-                                prob_average_frame = args.prob_average,
                                 dim=150,
                                 fraction=args.fraction,
                                 )
@@ -391,6 +395,7 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
+        
         # # TODO: differentiation control
         # if i%4 == 0:
         #     # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
@@ -518,18 +523,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --prob_derivative 0.25 --prob_average 0.25
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --prob_derivative 0.25 --prob_average 0.75
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --prob_derivative 0.75 --prob_average 0.25
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --prob_derivative 0.75 --prob_average 0.75    
-
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --seed 233 --prob_derivative 0.75 --prob_average 0.75
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --seed 233 --concat
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --seed 42
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --seed 42 --concat    
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --seed 3407
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s1prdra.py --sym_loss --infonce --epochs 400 --seed 3407 --concat   
-    
-# path: /data/checkpoints_yehengz/2streams_rand_derivative/ucf_rd1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233_operation_summation_prob0.2

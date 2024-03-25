@@ -1,6 +1,7 @@
 import os.path
 import pickle
 from typing import Any, Callable, Optional, Tuple
+import copy
 
 import numpy as np
 import pandas as pd
@@ -806,19 +807,23 @@ class UCF101RandDerivativeAverage(data.Dataset):
         seq = torch.stack(seq, 0)
         seq = seq.view(self.num_seq, self.seq_len, C, H, W) # N, T, C, H, W
         seq = seq.permute(0,2,1,3,4) # N, C, T, H, W
-        # seq = seq.view(self.num_seq*self.seq_len, C, H, W) # N*T, C, H, W
-        # seq = seq.permute(1,0,2,3) # C, N*T, H, W
+        average = torch.mean(seq, dim = 2, keepdim = True)
 
-        seq_rand_derivative = seq[:, :, :-1, :, :]
-        seq_rand_average = seq[:, :, :-1, :, :]
-
-        if random.random() < self.prob_derivative:
-            seq_rand_derivative = seq[:, :, 1:, :, :] - seq[:, :, :-1, :, :] # shape becomes N, C, T-1, H, W
-            # print("rand derivative shape is: ", seq_rand_derivative.shape)
+        seq_rand_derivative = copy.deepcopy(seq[:, :, :-1, :, :])
+        seq_rand_average = copy.deepcopy(seq[:, :, :-1, :, :])
         
+        if random.random() < self.prob_derivative:
+            seq_rand_derivative[0] = seq[0, :, 1:, :, :] - seq[0, :, :-1, :, :] # shape becomes N, C, T-1, H, W
+            # print("rand derivative shape is: ", seq_rand_derivative.shape)
+        if random.random() < self.prob_derivative:
+            seq_rand_derivative[1] = seq[1, :, 1:, :, :] - seq[1, :, :-1, :, :] # shape becomes N, C, T-1, H, W
+            # print("rand derivative shape is: ", seq_rand_derivative.shape)
+    
         if random.random() < self.prob_average_frame:
-            average = torch.mean(seq, dim = 2, keepdim = True)
-            seq_rand_average = torch.repeat_interleave(average, (self.seq_len-1), dim = 2)
+            seq_rand_average[0] = torch.repeat_interleave(average[0].unsqueeze(0), (self.seq_len-1), dim = 2)
+            # print("seq_rand_average.shape is: ", seq_rand_average.shape)
+        if random.random() < self.prob_average_frame:
+            seq_rand_average[1] = torch.repeat_interleave(average[1].unsqueeze(0), (self.seq_len-1), dim = 2)
             # print("seq_rand_average.shape is: ", seq_rand_average.shape)
 
         
