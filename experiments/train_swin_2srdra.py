@@ -8,7 +8,9 @@ sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 
+
 from swinclr2srdra import SWINCLR2SRDRA
+
 
 import random
 import math
@@ -108,6 +110,7 @@ parser.add_argument('--seed', default=233, type = int) # add a seed argument tha
 parser.add_argument('--concat', action='store_true') # default value is false, this arugment decide if we are summing two output from each encoders or concatenating them
 parser.add_argument('--prob_derivative', default = 0.5, type = float)
 parser.add_argument('--prob_average', default = 0.5, type = float)
+
 
 
 def adjust_learning_rate(args, optimizer, loader, step):
