@@ -1,7 +1,7 @@
 """
-resnet = r3d_18(width_deduction_ratio = 2.0, stem_deduct = True)
-resnet = r3d_18(width_deduction_ratio = 2.0)
-resnet = r3d_18()
+resnet = r3d_18(width_deduction_ratio = 2.0, stem_deduct = True) # change four blocks and stem
+resnet = r3d_18(width_deduction_ratio = 2.0) # change four blocks, but stem unchanged
+resnet = r3d_18() # original
 """
 
 from functools import partial
