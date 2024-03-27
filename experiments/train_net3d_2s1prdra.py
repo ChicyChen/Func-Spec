@@ -284,7 +284,7 @@ def main():
         feature_size = args.feature_size
         print('We are using summation')
 
-    ckpt_folder='/data/checkpoints_yehengz/2streams1proj_rand_derivative_rand_average/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_epochs%s_seed%s_operation%s_prob_derivative%s_prob_average%s' \
+    ckpt_folder='/data/checkpoints_yehengz/2streams1proj_rdra/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_epochs%s_seed%s_operation%s_prob_derivative%s_prob_average%s' \
         % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.epochs, args.seed, operation, args.prob_derivative, args.prob_average)
 
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
@@ -459,25 +459,25 @@ def main():
                 checkpoint_path = os.path.join(
                     ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
                 torch.save(state, checkpoint_path)
-            elif (i+1)<100 and (i+1)%10 == 0: # save weight at epoch 10, 20, 30, 40, 50, 60, 70, 80, 90
-                # save your improved network
-                # save the weight of encoder1
-                checkpoint_path1 = os.path.join(
-                    ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(i+1))
-                torch.save(resnet1.state_dict(), checkpoint_path1)
-                # save the weight of encoder2
-                checkpoint_path2 = os.path.join(
-                    ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(i+1))
-                torch.save(resnet2.state_dict(), checkpoint_path2)
+            # elif (i+1)<100 and (i+1)%10 == 0: # save weight at epoch 10, 20, 30, 40, 50, 60, 70, 80, 90
+            #     # save your improved network
+            #     # save the weight of encoder1
+            #     checkpoint_path1 = os.path.join(
+            #         ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(i+1))
+            #     torch.save(resnet1.state_dict(), checkpoint_path1)
+            #     # save the weight of encoder2
+            #     checkpoint_path2 = os.path.join(
+            #         ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(i+1))
+            #     torch.save(resnet2.state_dict(), checkpoint_path2)
 
-                # save whole model and optimizer
-                state = dict(
-                    model=model.state_dict(),
-                    optimizer=optimizer.state_dict(),
-                )
-                checkpoint_path = os.path.join(
-                    ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
-                torch.save(state, checkpoint_path)
+            #     # save whole model and optimizer
+            #     state = dict(
+            #         model=model.state_dict(),
+            #         optimizer=optimizer.state_dict(),
+            #     )
+            #     checkpoint_path = os.path.join(
+            #         ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
+            #     torch.save(state, checkpoint_path)
 
 
     if args.rank == 0:

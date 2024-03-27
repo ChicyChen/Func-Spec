@@ -146,3 +146,5 @@ checkpoints*
 .cache*
 
 3DNet_Visualization/
+
+*.nii

@@ -389,7 +389,6 @@ def main():
         else:
             train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
             # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-        break
         
         # current_time = time.time()
         if args.rank == 0:
