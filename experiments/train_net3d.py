@@ -7,8 +7,10 @@ import argparse
 sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
+sys.path.append("/home/yehengz/Func-Spec/resnet_edit")
 
 from vicclr import VICCLR
+from resnet import r3d_18
 
 import random
 import math
@@ -100,6 +102,10 @@ parser.add_argument('--mk400', action='store_true')
 parser.add_argument('--minik', action='store_true')
 parser.add_argument('--k400', action='store_true')
 parser.add_argument('--fraction', default=1.0, type=float)
+
+parser.add_argument('--seed', default=233, type = int)
+parser.add_argument('--width_deduction_ratio', default = 1.0, type = float)
+
 
 
 def adjust_learning_rate(args, optimizer, loader, step):
@@ -200,8 +206,8 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
         # random differentiation step
         # if rand:
-        if random.random() < 0.5:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
+        # if random.random() < 0.5:
+        #     video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
 
         # scheduled differentiation step
         if diff:
@@ -230,10 +236,11 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
 
 def main():
-    torch.manual_seed(233)
-    np.random.seed(233)
-
     args = parser.parse_args()
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
 
     torch.backends.cudnn.benchmark = True
     init_distributed_mode(args)
@@ -259,7 +266,7 @@ def main():
         resnet.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
     else:
         model_name = 'r3d18'
-        resnet = models.video.r3d_18()
+        resnet = r3d_18(width_deduction_ratio = args.width_deduction_ratio)
 
     if args.k400:
         dataname = 'k400'
@@ -272,8 +279,8 @@ def main():
     else:
         dataname = 'ucf'
 
-    ckpt_folder='/home/yehengz/Func-Spec/checkpoints/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
+    ckpt_folder='/data/checkpoints_yehengz/simclr_base/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_seed%s_width_deduc_ratio%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.seed, args.width_deduction_ratio)
     
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
@@ -365,9 +372,9 @@ def main():
     #                             )
     
     train_loss_list = []
-    train_loss_list2 = []
-    train_loss_list3 = []
-    train_loss_list4 = []
+    # train_loss_list2 = []
+    # train_loss_list3 = []
+    # train_loss_list4 = []
     epoch_list = range(args.start_epoch, args.epochs)
     lowest_loss = np.inf
     best_epoch = 0
@@ -376,45 +383,50 @@ def main():
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
 
-        # TODO: differentiation control
-        if i%4 == 0:
-            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        elif i%4 == 1:
-            train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        elif i%4 == 2:
-            train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-        else:
-            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-        
+        # # TODO: differentiation control
+        # if i%4 == 0:
+        #     train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
+        #     # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+        # elif i%4 == 1:
+        #     train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
+        #     # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
+        # elif i%4 == 2:
+        #     train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
+        #     # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
+        # else:
+        #     train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+        #     # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
+        train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
         # current_time = time.time()
         if args.rank == 0:
-            if i%4 == 3:
-            # if i%3 == 2:
-            # if i%2 == 1:
-                if train_loss < lowest_loss:
-                    lowest_loss = train_loss
-                    best_epoch = i + 1
-
-            if i%4 == 0:
-                train_loss_list2.append(train_loss2)
-                print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-                logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-            elif i%4 == 1:
-                train_loss_list3.append(train_loss3)
-                print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-                logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-            elif i%4 == 2:
-                train_loss_list4.append(train_loss4)
-                print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-                logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-            else:
-                train_loss_list.append(train_loss)
-                print('Epoch: %s, Train loss: %s' % (i, train_loss))
-                logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+            # if i%4 == 3:
+            # # if i%3 == 2:
+            # # if i%2 == 1:
+            #     if train_loss < lowest_loss:
+            #         lowest_loss = train_loss
+            #         best_epoch = i + 1
+            if train_loss < lowest_loss:
+                lowest_loss = train_loss
+                best_epoch = i + 1
+            # if i%4 == 0:
+            #     train_loss_list2.append(train_loss2)
+            #     print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
+            #     logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
+            # elif i%4 == 1:
+            #     train_loss_list3.append(train_loss3)
+            #     print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
+            #     logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
+            # elif i%4 == 2:
+            #     train_loss_list4.append(train_loss4)
+            #     print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
+            #     logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
+            # else:
+            #     train_loss_list.append(train_loss)
+            #     print('Epoch: %s, Train loss: %s' % (i, train_loss))
+            #     logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+            train_loss_list.append(train_loss)
+            print('Epoch: %s, Train loss: %s' % (i, train_loss))
+            logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
 
             # j = int(i/4)
             # if ((j+1)%10 == 0 or j<20) and i%4 == 3:
@@ -432,34 +444,35 @@ def main():
                     ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
                 torch.save(state, checkpoint_path)
 
-    # if args.rank == 0:
-    #     logging.info('Training from ep %d to ep %d finished' %
-    #         (args.start_epoch, args.epochs))
-    #     logging.info('Best epoch: %s' % best_epoch)
+    if args.rank == 0:
+        logging.info('Training from ep %d to ep %d finished' %
+            (args.start_epoch, args.epochs))
+        logging.info('Best epoch: %s' % best_epoch)
 
-    #     # save your improved network
-    #     checkpoint_path = os.path.join(
-    #         ckpt_folder, 'resnet_epoch%s.pth.tar' % str(args.epochs))
-    #     torch.save(resnet.state_dict(), checkpoint_path)
-    #     state = dict(
-    #             model=model.state_dict(),
-    #             optimizer=optimizer.state_dict(),
-    #         )
-    #     checkpoint_path = os.path.join(
-    #         ckpt_folder, 'net3d_epoch%s.pth.tar' % str(args.epochs))
-    #     torch.save(state, checkpoint_path)
+        # save your improved network
+        checkpoint_path = os.path.join(
+            ckpt_folder, 'resnet_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(resnet.state_dict(), checkpoint_path)
+        state = dict(
+                model=model.state_dict(),
+                optimizer=optimizer.state_dict(),
+            )
+        checkpoint_path = os.path.join(
+            ckpt_folder, 'net3d_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(state, checkpoint_path)
 
 
-    #     plot_list = range(args.start_epoch, args.epochs, 4)
-    #     # plot training process
-    #     plt.plot(plot_list, train_loss_list, label = 'train')
-    #     plt.plot(plot_list, train_loss_list2, label = 'train2')
-    #     plt.plot(plot_list, train_loss_list3, label = 'train3')
-    #     plt.plot(plot_list, train_loss_list4, label = 'train4')
+        # plot_list = range(args.start_epoch, args.epochs, 4)
+        plot_list = range(args.start_epoch, args.epochs)
+        # plot training process
+        plt.plot(plot_list, train_loss_list, label = 'train')
+        # plt.plot(plot_list, train_loss_list2, label = 'train2')
+        # plt.plot(plot_list, train_loss_list3, label = 'train3')
+        # plt.plot(plot_list, train_loss_list4, label = 'train4')
 
-    #     plt.legend()
-    #     plt.savefig(os.path.join(
-    #         ckpt_folder, 'epoch%s_bs%s_loss.png' % (args.epochs, args.batch_size)))
+        plt.legend()
+        plt.savefig(os.path.join(
+            ckpt_folder, 'epoch%s_bs%s_loss.png' % (args.epochs, args.batch_size)))
 
 
 

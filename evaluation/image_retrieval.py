@@ -5,6 +5,9 @@ import argparse
 sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
+sys.path.append("/home/yehengz/Func-Spec/resnet_edit")
+
+from resnet import r3d_18
 
 from retrieval import *
 
@@ -63,7 +66,7 @@ parser.add_argument('--knn_t', default=0.07, type = float)
 parser.add_argument('--weighted_knn', action='store_true') # default is false
 
 parser.add_argument('--swin', action='store_true') # default is false
-
+parser.add_argument('--width_deduction_ratio', default=1.0, type = float)
 
 # python evaluation/eval_retrieval.py --ckpt_folder checkpoints/ucf1.0_pcn_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse --epoch_num 400
 # python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_2s/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupFalse_projection_size2048_tau0.1_epoch_num400_operation_summation --epoch_num 400 --swin --gpu '7'
@@ -291,7 +294,9 @@ def main():
         elif args.which_encoder == 2:
             ckpt_path = os.path.join(ckpt_folder, 'swinTransformer2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
     else:
-        if args.which_encoder == 1:
+        if args.which_encoder == 0:
+            ckpt_path = os.path.join(ckpt_folder, 'resnet_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
+        elif args.which_encoder == 1:
             ckpt_path = os.path.join(ckpt_folder, 'resnet1_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
         elif args.which_encoder == 2:
             ckpt_path = os.path.join(ckpt_folder, 'resnet2_epoch%s.pth.tar' % args.epoch_num) # path to the weight of pretrain network
@@ -348,9 +353,9 @@ def main():
         else:
             model_name = 'r3d18'
             if not args.kinetics:
-                encoder = models.video.r3d_18()
+                encoder = r3d_18(width_deduction_ratio = args.width_deduction_ratio)
             else:
-                encoder = models.video.r3d_18(pretrained=True)
+                encoder = r3d_18(width_deduction_ratio = args.width_deduction_ratio, pretrained=True)
 
     # if not args.kinetics:
     #     resnet = models.video.r3d_18()
