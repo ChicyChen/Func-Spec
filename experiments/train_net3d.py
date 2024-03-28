@@ -34,8 +34,8 @@ import matplotlib.pyplot as plt
 from augmentation import *
 from distributed_utils import init_distributed_mode
 
-# python -m torch.distributed.launch --nproc_per_node=8 experiments/train_net3d.py --sym_loss
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --sym_loss --epochs 12
+# python -m torch.distributed.launch --nproc_per_node=8 experiments/train_net3d.py --sym_loss --infonce --epochs 400 --feature_size 363 --width_deduction_ratio 1.41
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --sym_loss --infonce --epochs 400 --feature_size 363 --width_deduction_ratio 1.41
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --epochs 400 --batch_size 64 --sym_loss --base_lr 4.8 --projection 2048 --proj_hidden 2048 --pred_layer 0 --proj_layer 3 --cov_l 0.04 --std_l 1.0 --spa_l 0.0
 
 parser = argparse.ArgumentParser()
@@ -195,8 +195,6 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
     # for data in train_loader:
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
-        if step >0:
-            break
         # TODO: be careful with video size
         # N = 2 by default
         video, label = data # B, N, C, T, H, W

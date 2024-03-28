@@ -67,6 +67,7 @@ parser.add_argument('--weighted_knn', action='store_true') # default is false
 
 parser.add_argument('--swin', action='store_true') # default is false
 parser.add_argument('--width_deduction_ratio', default=1.0, type = float)
+parser.add_argument('--stem_deduct', action='store_true') # default is false
 
 # python evaluation/eval_retrieval.py --ckpt_folder checkpoints/ucf1.0_pcn_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse --epoch_num 400
 # python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_2s/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupFalse_projection_size2048_tau0.1_epoch_num400_operation_summation --epoch_num 400 --swin --gpu '7'
@@ -353,9 +354,9 @@ def main():
         else:
             model_name = 'r3d18'
             if not args.kinetics:
-                encoder = r3d_18(width_deduction_ratio = args.width_deduction_ratio)
+                encoder = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct)
             else:
-                encoder = r3d_18(width_deduction_ratio = args.width_deduction_ratio, pretrained=True)
+                encoder = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct, pretrained=True)
 
     # if not args.kinetics:
     #     resnet = models.video.r3d_18()

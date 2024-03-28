@@ -78,6 +78,8 @@ parser.add_argument('--concat', action='store_true') # default is False, meaning
 parser.add_argument('--seed', default = 233, type = int) # seed used during training
 parser.add_argument('--swin', action='store_true') # default is false
 parser.add_argument('--width_deduction_ratio', default=1.0, type = float)
+parser.add_argument('--stem_deduct', action='store_true') # default is false
+
 # python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400
 # python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --which_encoder 2
 # python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400
@@ -247,11 +249,11 @@ def main():
         else:
             model_name = 'r3d18'
             if not args.kinetics:
-                encoder1 = r3d_18(width_deduction_ratio = args.width_deduction_ratio)
-                encoder2 = r3d_18(width_deduction_ratio = args.width_deduction_ratio)
+                encoder1 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct)
+                encoder2 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct)
             else:
-                encoder1 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, pretrained=True)
-                encoder2 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, pretrained=True)
+                encoder1 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct, pretrained=True)
+                encoder2 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct, pretrained=True)
 
     # if not args.kinetics:
     #     resnet = models.video.r3d_18()
