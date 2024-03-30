@@ -385,7 +385,7 @@ def main():
             model_name = 'r3d18'
             if not args.kinetics:
                 encoder1 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct)
-                encoder2 = r3d_18(width_deduction_ratio = args.width_deduction_ratio)
+                encoder2 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct)
             else:
                 encoder1 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct, pretrained=True)
                 encoder2 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct, pretrained=True)
