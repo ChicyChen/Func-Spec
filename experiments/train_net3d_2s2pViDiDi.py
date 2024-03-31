@@ -395,8 +395,6 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
-        if i >0:
-            break
         
         # # TODO: differentiation control
         if i%4 == 0:
@@ -466,25 +464,25 @@ def main():
                 checkpoint_path = os.path.join(
                     ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
                 torch.save(state, checkpoint_path)
-            elif (i+1)<100 and (i+1)%10 == 0: # save weight at epoch 10, 20, 30, 40, 50, 60, 70, 80, 90
-                # save your improved network
-                # save the weight of encoder1
-                checkpoint_path1 = os.path.join(
-                    ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(i+1))
-                torch.save(resnet1.state_dict(), checkpoint_path1)
-                # save the weight of encoder2
-                checkpoint_path2 = os.path.join(
-                    ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(i+1))
-                torch.save(resnet2.state_dict(), checkpoint_path2)
+            # elif (i+1)<100 and (i+1)%10 == 0: # save weight at epoch 10, 20, 30, 40, 50, 60, 70, 80, 90
+            #     # save your improved network
+            #     # save the weight of encoder1
+            #     checkpoint_path1 = os.path.join(
+            #         ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(i+1))
+            #     torch.save(resnet1.state_dict(), checkpoint_path1)
+            #     # save the weight of encoder2
+            #     checkpoint_path2 = os.path.join(
+            #         ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(i+1))
+            #     torch.save(resnet2.state_dict(), checkpoint_path2)
 
-                # save whole model and optimizer
-                state = dict(
-                    model=model.state_dict(),
-                    optimizer=optimizer.state_dict(),
-                )
-                checkpoint_path = os.path.join(
-                    ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
-                torch.save(state, checkpoint_path)
+            #     # save whole model and optimizer
+            #     state = dict(
+            #         model=model.state_dict(),
+            #         optimizer=optimizer.state_dict(),
+            #     )
+            #     checkpoint_path = os.path.join(
+            #         ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
+            #     torch.save(state, checkpoint_path)
 
 
     if args.rank == 0:

@@ -77,7 +77,6 @@ class VICCLR(nn.Module):
         B, N, C, T, H, W = x.size()
 
         # ground truth latents
-        print(self.encoder(x.view(B*N, C, T, H, W)).size())
         hidden = flatten(self.encoder(x.view(B*N, C, T, H, W))) # encoder forward
 
         gt_z_all = self.projector(hidden) # projector forward
