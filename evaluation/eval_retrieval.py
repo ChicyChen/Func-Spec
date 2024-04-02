@@ -205,7 +205,10 @@ def main():
     else:
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'hmdb_knn.log'), level=logging.INFO)
     logging.info('Started')
-    
+    if args.diff:
+        logging.info(f"k-nn accuracy using differences between frames\n")
+    else:
+        logging.info(f"k-nn accuracy using original frames \n")    
     if not args.random:
         logging.info(ckpt_path)
 

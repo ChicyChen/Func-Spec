@@ -286,15 +286,15 @@ def main():
         operation = "_Summation"
         print('We are using summation')
     
-    if args.AdamW:
-        which_optimizer = "AdamW"
-    else:
-        which_optimizer = "LARS"
+    # if args.AdamW:
+    #     which_optimizer = "AdamW"
+    # else:
+    #     which_optimizer = "LARS"
 
-    # ckpt_folder='/data/checkpoints_yehengz/2streams2projs_rdra/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_feature_size%s_projection%s_proj_hidden%s_epochs%s_seed%s_operation%s_prob_derivative%s_prob_average%s_width_deduc_ratio%s_stem_deduct%s_optimizer%s' \
+    ckpt_folder='/data/checkpoints_yehengz/2streams2projs_rdra/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_feature_size%s_projection%s_proj_hidden%s_epochs%s_seed%s_operation%s_prob_derivative%s_prob_average%s_width_deduc_ratio%s_stem_deduct%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.feature_size, args.projection, args.proj_hidden, args.epochs, args.seed, operation, args.prob_derivative, args.prob_average, args.width_deduction_ratio, args.stem_deduct)
+    # ckpt_folder='/data/checkpoints_yehengz/2streams2projs_rdra/tuning/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_feature_size%s_projection%s_proj_hidden%s_epochs%s_seed%s_operation%s_prob_derivative%s_prob_average%s_width_deduc_ratio%s_stem_deduct%s_optimizer%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.feature_size, args.projection, args.proj_hidden, args.epochs, args.seed, operation, args.prob_derivative, args.prob_average, args.width_deduction_ratio, args.stem_deduct, which_optimizer)
-    ckpt_folder='/data/checkpoints_yehengz/2streams2projs_rdra/tuning/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_feature_size%s_projection%s_proj_hidden%s_epochs%s_seed%s_operation%s_prob_derivative%s_prob_average%s_width_deduc_ratio%s_stem_deduct%s_optimizer%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.feature_size, args.projection, args.proj_hidden, args.epochs, args.seed, operation, args.prob_derivative, args.prob_average, args.width_deduction_ratio, args.stem_deduct, which_optimizer)
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
 
