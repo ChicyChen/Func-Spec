@@ -75,6 +75,8 @@ parser.add_argument('--swin', action='store_true') # default is False
 
 
 parser.add_argument('--diff', action='store_true') # default is False
+parser.add_argument('--average', action='store_true') # default is False
+# Let's assume diff and average can not be both true
 
 parser.add_argument('--seed', default = 233, type = int) # seed used during training
 parser.add_argument('--which_encoder', default = 0, type = int) # default is 1, the other option is 2; if is 0, then use the basic simclr structure, which has only on encoder
@@ -97,7 +99,7 @@ def test_transform():
     return transform
 
 
-def extract_features(loader, model, test=True, diff=False):
+def extract_features(loader, model, test=True, diff=False, average=False):
     model.eval()
 
     features = []
@@ -110,32 +112,57 @@ def extract_features(loader, model, test=True, diff=False):
             # N = 2 by default, C is number of channel (C = 3), and T is the number of frames in a video clip
             input_tensor, label = data_i
             input_tensor = input_tensor.to(torch.device('cuda'))
+            frames_average = torch.mean(input_tensor, dim = 2, keepdim = True)
             B, N, C, T, H, W = input_tensor.shape
             print("The shape of the data input_tensor( in form of (B, N, C, T, H, W)) is: ", (B, N, C, T, H, W))
             input_tensor_diff = input_tensor[:,:,:,1:,:,:] - input_tensor[:,:,:,:-1,:,:] # dX/dt, T = T-1
             print("The shape of input_tensor_diff is: ", input_tensor_diff.shape)
+            input_tensor_average = torch.repeat_interleave(frames_average, T, dim = 2)
+            print("The shape of input_tensor_average is: ", input_tensor_diff.shape)
 
             h = model(input_tensor.view(B*N, C, T, H, W))
             h_diff = model(input_tensor_diff.view(B*N, C, T-1, H, W))
+            h_average = model(input_tensor_average.view(B*N, C, T, H, W))
             # # kind 1
             if test:
                 h = h.reshape(B, N, -1) # B, N, D
                 h_diff = h_diff.reshape(B, N, -1)
-                if not diff:
+                h_average = h_average.reshape(B, N, -1)
+                if diff:
+                    print("diff")
+                    features.append(torch.cat((h, h_diff), -1))
+                elif average:
+                    print("average")
+                    features.append(torch.cat((h, h_average), -1))
+                else:
                     print("0")
                     features.append(h)
-                else:
-                    print("1")
-                    features.append(torch.cat((h, h_diff), -1))
+
+                # if not diff:
+                #     print("0")
+                #     features.append(h)
+                # else:
+                #     print("1")
+                #     features.append(torch.cat((h, h_diff), -1))
                 label_lst.append(label)
             # kind 2
             else:
-                if not diff:
+                if diff:
+                    print("diff")
+                    features.append(torch.cat((h, h_diff), -1))
+                elif average:
+                    print("average")
+                    features.append(torch.cat((h, h_average), -1))
+                else:
                     print("0")
                     features.append(h)
-                else:
-                    print("1")
-                    features.append(torch.cat((h, h_diff), -1))
+
+                # if not diff:
+                #     print("0")
+                #     features.append(h)
+                # else:
+                #     print("1")
+                #     features.append(torch.cat((h, h_diff), -1))
                 label_lst.append(torch.ones(B,N)*label)
 
             i += 1
