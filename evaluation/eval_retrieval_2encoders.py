@@ -72,6 +72,9 @@ parser.add_argument('--r21d', action='store_true') # default is False
 parser.add_argument('--mc3', action='store_true') # default is False
 parser.add_argument('--s3d', action='store_true') # default is False
 
+parser.add_argument('--diff', action='store_true') # default is False
+parser.add_argument('--average', action='store_true') # default is False
+# Let's assume diff and average can not be both true
 
 parser.add_argument('--concat', action='store_true') # default is False, meaning averageing features from two encoders
 
@@ -96,7 +99,7 @@ def test_transform():
     return transform
 
 
-def extract_features(loader, model1, model2, test=True, concat = False):
+def extract_features(loader, model1, model2, test=True, diff=False, average=False, concat = False):
     model1.eval()
     model2.eval()
 
@@ -110,34 +113,104 @@ def extract_features(loader, model1, model2, test=True, concat = False):
             # N = 2 by default, C is number of channel (C = 3), and T is the number of frames in a video clip
             input_tensor, label = data_i
             input_tensor = input_tensor.to(torch.device('cuda'))
+            frames_average = torch.mean(input_tensor, dim = 2, keepdim = True)
             B, N, C, T, H, W = input_tensor.shape
             print("The shape of the data input_tensor( in form of (B, N, C, T, H, W)) is: ", (B, N, C, T, H, W))
             input_tensor_diff = input_tensor[:,:,:,1:,:,:] - input_tensor[:,:,:,:-1,:,:] # dX/dt, T = T-1
             print("The shape of input_tensor_diff is: ", input_tensor_diff.shape)
+            input_tensor_average = torch.repeat_interleave(frames_average, T, dim = 2)
+            print("The shape of input_tensor_average is: ", input_tensor_average.shape)
 
             h1 = model1(input_tensor.view(B*N, C, T, H, W))
+            h1_diff = model1(input_tensor_diff.view(B*N, C, T-1, H, W))
+            h1_average = model1(input_tensor_average.view(B*N, C, T, H, W))
             h2 = model2(input_tensor.view(B*N, C, T, H, W))
+            h2_diff = model2(input_tensor_diff.view(B*N, C, T-1, H, W))
+            h2_average = model2(input_tensor_average.view(B*N, C, T, H, W))
+
             # # kind 1
             if test:
                 h1 = h1.reshape(B, N, -1) # B, N, D
+                h1_diff = h1_diff.reshape(B, N, -1)
+                h1_average = h1_average.reshape(B, N, -1)
                 h2 = h2.reshape(B, N, -1)
+                h2_diff = h2_diff.reshape(B, N, -1)
+                h2_average = h2_average.reshape(B, N, -1)
                 if not concat:
-                    print("average E1 and E2")
-                    h = (h1+h2)/2
-                    features.append(h)
+                    if diff:
+                        print("diff")
+                        print("average E1 and E2")
+                        h = torch.cat((h1, h1_diff), -1) + torch.cat((h2, h2_diff), -1)
+                        h = h/2
+                        features.append(h)
+                    elif average:
+                        print("average frames")
+                        print("average E1 and E2")
+                        h = torch.cat((h1, h1_average), -1) + torch.cat((h2, h2_average), -1)
+                        h = h/2
+                        features.append(h)
+                    else:
+                        print("0")
+                        print("average E1 and E2")
+                        h = (h1+h2)/2
+                        features.append(h)
                 else:
-                    print("concat E1 and E2")
-                    features.append(torch.cat((h1, h2), -1))
+                    if diff:
+                        print("diff")
+                        print("concat E1 and E2")
+                        d1 = torch.cat((h1, h1_diff), -1)
+                        d2 = torch.cat((h2, h2_diff), -1)
+                        features.append(torch.cat((d1, d2), -1))
+                    elif average:
+                        print("average frames")
+                        print("concat E1 and E2")
+                        a1 = torch.cat((h1, h1_average), -1)
+                        a2 = torch.cat((h2, h2_average), -1)
+                        features.append(torch.cat((a1, a2), -1))
+                    else:
+                        print("0")
+                        features.append(h)
+                        print("concat E1 and E2")
+                        features.append(torch.cat((h1, h2), -1))
                 label_lst.append(label)
             # kind 2
             else:
                 if not concat:
-                    print("average E1 and E2")
-                    h = (h1+h2)/2
-                    features.append(h)
+                    if diff:
+                        print("diff")
+                        print("average E1 and E2")
+                        h = torch.cat((h1, h1_diff), -1) + torch.cat((h2, h2_diff), -1)
+                        h = h/2
+                        features.append(h)
+                    elif average:
+                        print("average frames")
+                        print("average E1 and E2")
+                        h = torch.cat((h1, h1_average), -1) + torch.cat((h2, h2_average), -1)
+                        h = h/2
+                        features.append(h)
+                    else:
+                        print("0")
+                        print("average E1 and E2")
+                        h = (h1+h2)/2
+                        features.append(h)
                 else:
-                    print("concat E1 and E2")
-                    features.append(torch.cat((h1, h2), -1))
+                    if diff:
+                        print("diff")
+                        print("concat E1 and E2")
+                        d1 = torch.cat((h1, h1_diff), -1)
+                        d2 = torch.cat((h2, h2_diff), -1)
+                        features.append(torch.cat((d1, d2), -1))
+                    elif average:
+                        print("average frames")
+                        print("concat E1 and E2")
+                        a1 = torch.cat((h1, h1_average), -1)
+                        a2 = torch.cat((h2, h2_average), -1)
+                        features.append(torch.cat((a1, a2), -1))
+                    else:
+                        print("0")
+                        features.append(h)
+                        print("concat E1 and E2")
+                        features.append(torch.cat((h1, h2), -1))
                 label_lst.append(torch.ones(B,N)*label)
 
             i += 1
@@ -158,15 +231,15 @@ def extract_features(loader, model1, model2, test=True, concat = False):
     return h_total, label_total
 
 
-def perform_knn(model1, model2, train_loader, test_loader, k=1, concat=False):
+def perform_knn(model1, model2, train_loader, test_loader, k=1, diff = False, average = False, concat=False):
     model1.eval()
     model2.eval()
 
     ssl_evaluator = Retrieval2Encoders(model1=model1, model2=model2, k=k, device=cuda, num_seq=args.num_seq)
-    h_train, l_train = extract_features(train_loader, model1, model2, concat=concat)
+    h_train, l_train = extract_features(train_loader, model1, model2, diff=diff, average=average, concat=concat)
 
     train_acc = ssl_evaluator.knn(h_train, l_train, k=1)
-    h_test, l_test = extract_features(test_loader, model1, model2, concat=concat)
+    h_test, l_test = extract_features(test_loader, model1, model2, diff=diff, average=average, concat=concat)
     acc1, acc5, acc10  = ssl_evaluator.eval(h_test, l_test, l_train)
 
     # train_acc, val_acc = ssl_evaluator.fit(train_loader, test_loader)
@@ -346,14 +419,14 @@ def main():
     # random weight
     if args.random:
         logging.info(f"k-nn accuracy performed with random weight\n")
-        perform_knn(encoder1, encoder2, train_loader, test_loader, args.k, args.concat)
+        perform_knn(encoder1, encoder2, train_loader, test_loader, args.k, args.diff, args.average, args.concat)
     elif args.kinetics:
         logging.info(f"k-nn accuracy performed with kinetics weight\n")
-        perform_knn(encoder1,encoder2, train_loader, test_loader, args.k, args.concat)
+        perform_knn(encoder1,encoder2, train_loader, test_loader, args.k, args.diff, args.average, args.concat)
     else:
         # after training
         logging.info(f"k-nn accuracy performed after ssl\n")
-        perform_knn(encoder1, encoder2, train_loader, test_loader, args.k, args.concat)
+        perform_knn(encoder1, encoder2, train_loader, test_loader, args.k, args.diff, args.average, args.concat)
 
 
 

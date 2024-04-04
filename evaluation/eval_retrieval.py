@@ -41,24 +41,6 @@ parser.add_argument('--kinetics', action='store_true') # default value is False
 parser.add_argument('--k', default=1, type=int)
 
 parser.add_argument('--ckpt_folder', default='checkpoints/3dbase_ucf101_lr0.0001_wd1e-05', type=str) # need tp adjust to my_path
-# here are the paths to the weights of different models
-# For experiment1: 2Streams
-#/data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42
-#/data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407
-# checkpoints/2S/SimCLR_ucf1.0_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse/encoder1
-# checkpoints/2S/SimCLR_ucf1.0_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse/encoder2
-# checkpoints/2S/VICReg_ucf1.0_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse/encoder1
-# checkpoints/2S/VICReg_ucf1.0_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse/encoder2
-# For experiment2: No-Weight_Sharing
-# checkpoints/NWS/SimCLR_ucf1.0_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_fixed_pair0/encoder1
-# checkpoints/NWS/SimCLR_ucf1.0_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_fixed_pair0/encoder2
-# checkpoints/NWS/SimCLR_ucf1.0_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_fixed_pair1/encoder1
-# checkpoints/NWS/SimCLR_ucf1.0_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_fixed_pair1/encoder2
-# checkpoints/NWS/VICReg_ucf1.0_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_fixed_pair0/encoder1
-# checkpoints/NWS/VICReg_ucf1.0_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_fixed_pair0/encoder2
-# checkpoints/NWS/VICReg_ucf1.0_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_fixed_pair1/encoder1
-# checkpoints/NWS/VICReg_ucf1.0_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_fixed_pair1/encoder2
-
 parser.add_argument('--epoch_num', default=400, type=int)
 
 parser.add_argument('--num_seq', default=10, type=int)
@@ -83,10 +65,6 @@ parser.add_argument('--which_encoder', default = 0, type = int) # default is 1, 
 parser.add_argument('--width_deduction_ratio', default=1.0, type = float)
 parser.add_argument('--stem_deduct', action='store_true') # default is false
 
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --which_encoder 2
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --which_encoder 2
 def test_transform():
     transform = transforms.Compose([
         Scale(size=128),
@@ -118,7 +96,7 @@ def extract_features(loader, model, test=True, diff=False, average=False):
             input_tensor_diff = input_tensor[:,:,:,1:,:,:] - input_tensor[:,:,:,:-1,:,:] # dX/dt, T = T-1
             print("The shape of input_tensor_diff is: ", input_tensor_diff.shape)
             input_tensor_average = torch.repeat_interleave(frames_average, T, dim = 2)
-            print("The shape of input_tensor_average is: ", input_tensor_diff.shape)
+            print("The shape of input_tensor_average is: ", input_tensor_average.shape)
 
             h = model(input_tensor.view(B*N, C, T, H, W))
             h_diff = model(input_tensor_diff.view(B*N, C, T-1, H, W))
@@ -183,14 +161,14 @@ def extract_features(loader, model, test=True, diff=False, average=False):
     return h_total, label_total
 
 
-def perform_knn(model, train_loader, test_loader, k=1, diff=False):
+def perform_knn(model, train_loader, test_loader, k=1, diff=False, average = False):
     model.eval()
 
     ssl_evaluator = Retrieval(model=model, k=k, device=cuda, num_seq=args.num_seq)
-    h_train, l_train = extract_features(train_loader, model, diff=diff)
+    h_train, l_train = extract_features(train_loader, model, diff=diff, average=average)
 
     train_acc = ssl_evaluator.knn(h_train, l_train, k=1)
-    h_test, l_test = extract_features(test_loader, model, diff=diff)
+    h_test, l_test = extract_features(test_loader, model, diff=diff, average=average)
     acc1, acc5, acc10  = ssl_evaluator.eval(h_test, l_test, l_train)
 
     # train_acc, val_acc = ssl_evaluator.fit(train_loader, test_loader)
@@ -362,14 +340,14 @@ def main():
     # random weight
     if args.random:
         logging.info(f"k-nn accuracy performed with random weight\n")
-        perform_knn(encoder, train_loader, test_loader, args.k, args.diff)
+        perform_knn(encoder, train_loader, test_loader, args.k, args.diff, args.average)
     elif args.kinetics:
         logging.info(f"k-nn accuracy performed with kinetics weight\n")
-        perform_knn(encoder, train_loader, test_loader, args.k, args.diff)
+        perform_knn(encoder, train_loader, test_loader, args.k, args.diff, args.average)
     else:
         # after training
         logging.info(f"k-nn accuracy performed after ssl\n")
-        perform_knn(encoder, train_loader, test_loader, args.k, args.diff)
+        perform_knn(encoder, train_loader, test_loader, args.k, args.diff, args.average)
 
 
 
