@@ -148,3 +148,5 @@ checkpoints*
 3DNet_Visualization/
 
 *.nii
+*.npy
+*.pt

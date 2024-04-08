@@ -7,6 +7,9 @@ import argparse
 sys.path.append("/home/siyich/Func-Spec/utils")
 sys.path.append("/home/siyich/Func-Spec/net3d")
 sys.path.append("/home/siyich/Func-Spec/dataload")
+sys.path.append("/home/siyich/Func-Spec/resnet_edit")
+from resnet_edit import r3d_18
+
 
 from vicclr import VICCLR
 
@@ -257,6 +260,8 @@ def main():
     else:
         model_name = 'r3d18'
         resnet = models.video.r3d_18()
+        # resnet = r3d_18(width_deduction_ratio = 1.41) # original
+
 
     if args.k400:
         dataname = 'k400'

@@ -366,6 +366,7 @@ class NetHook(nn.Module):
     def forward(self, x):
         representation = self.get_representation(x)
         return representation
+    
 
 # Scott TODO: Read and understand
 class NetWrapper(nn.Module):

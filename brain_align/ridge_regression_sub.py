@@ -5,6 +5,7 @@ import torch
 import mat73
 import pickle
 import copy
+import os
 
 fmripath = '/data/3/human/Human_Visual_Experiments/video_fmri_dataset/subject1/fmri/training_fmri.mat'
 fmripath_test = '/data/3/human/Human_Visual_Experiments/video_fmri_dataset/subject1/fmri/testing_fmri.mat'
@@ -23,8 +24,14 @@ data_avg = (data1 + data2) / 2
 session1 = data_avg[:,:,0].T 
 session1_sub = session1[:, ventral_idx] # (240, subnum): T, D
 
-features = torch.load("features_ds.pt") # (240, 367): T, d
-features_test = torch.load("features_ds_test.pt") # (240, 367): T, d
+# features = torch.load("features_ds.pt") # (240, 367): T, d
+# features_test = torch.load("features_ds_test.pt") # (240, 367): T, d
+# load processed model features
+folder = "encoder1"
+features_path = os.path.join(folder, "ds_features_all.pt")
+features_test_path = os.path.join(folder, "ds_features_test_all.pt")
+features = np.load(features_path) # (240*18, 367): T, d
+features_test = np.load(features_test_path) # (240*5, 367): T, d
 
 clf = Ridge(alpha=10.0)
 clf.fit(features, session1_sub)

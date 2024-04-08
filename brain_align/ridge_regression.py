@@ -28,8 +28,8 @@ fmri_test = np.concatenate(fmri_test) # (240*5, 59412): T, n
 folder = "encoder2_simple_av"
 features_path = os.path.join(folder, "ds_features_all.pt")
 features_test_path = os.path.join(folder, "ds_features_test_all.pt")
-features = torch.load(features_path) # (240*18, 367): T, d
-features_test = torch.load(features_test_path) # (240*5, 367): T, d
+features = np.load(features_path) # (240*18, 367): T, d
+features_test = np.load(features_test_path) # (240*5, 367): T, d
 
 # ridge regression
 clf = Ridge(alpha=1.0)
