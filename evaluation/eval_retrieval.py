@@ -90,12 +90,12 @@ def extract_features(loader, model, test=True, diff=False, average=False):
             # N = 2 by default, C is number of channel (C = 3), and T is the number of frames in a video clip
             input_tensor, label = data_i
             input_tensor = input_tensor.to(torch.device('cuda'))
-            frames_average = torch.mean(input_tensor, dim = 2, keepdim = True)
+            frames_average = torch.mean(input_tensor, dim = 3, keepdim = True)
             B, N, C, T, H, W = input_tensor.shape
             print("The shape of the data input_tensor( in form of (B, N, C, T, H, W)) is: ", (B, N, C, T, H, W))
             input_tensor_diff = input_tensor[:,:,:,1:,:,:] - input_tensor[:,:,:,:-1,:,:] # dX/dt, T = T-1
             print("The shape of input_tensor_diff is: ", input_tensor_diff.shape)
-            input_tensor_average = torch.repeat_interleave(frames_average, T, dim = 2)
+            input_tensor_average = torch.repeat_interleave(frames_average, T, dim = 3)
             print("The shape of input_tensor_average is: ", input_tensor_average.shape)
 
             h = model(input_tensor.view(B*N, C, T, H, W))
@@ -210,10 +210,14 @@ def main():
     else:
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'hmdb_knn.log'), level=logging.INFO)
     logging.info('Started')
+
     if args.diff:
         logging.info(f"k-nn accuracy using differences between frames\n")
+    elif args.average:
+        logging.info(f"k-nn accuracy using average across frames\n")
     else:
-        logging.info(f"k-nn accuracy using original frames \n")    
+        logging.info(f"k-nn accuracy using original frames \n")  
+
     if not args.random:
         logging.info(ckpt_path)
 

@@ -72,11 +72,8 @@ parser.add_argument('--r21d', action='store_true') # default is False
 parser.add_argument('--mc3', action='store_true') # default is False
 parser.add_argument('--s3d', action='store_true') # default is False
 
-parser.add_argument('--diff', action='store_true') # default is False
-parser.add_argument('--average', action='store_true') # default is False
 # Let's assume diff and average can not be both true
 
-parser.add_argument('--concat', action='store_true') # default is False, meaning averageing features from two encoders
 
 parser.add_argument('--seed', default = 233, type = int) # seed used during training
 parser.add_argument('--swin', action='store_true') # default is false
@@ -99,7 +96,7 @@ def test_transform():
     return transform
 
 
-def extract_features(loader, model1, model2, test=True, diff=False, average=False, concat = False):
+def extract_features(loader, model1, model2, test=True):
     model1.eval()
     model2.eval()
 
@@ -118,99 +115,29 @@ def extract_features(loader, model1, model2, test=True, diff=False, average=Fals
             print("The shape of the data input_tensor( in form of (B, N, C, T, H, W)) is: ", (B, N, C, T, H, W))
             input_tensor_diff = input_tensor[:,:,:,1:,:,:] - input_tensor[:,:,:,:-1,:,:] # dX/dt, T = T-1
             print("The shape of input_tensor_diff is: ", input_tensor_diff.shape)
-            input_tensor_average = torch.repeat_interleave(frames_average, T, dim = 3)
+            input_tensor_average = torch.repeat_interleave(frames_average, (T-1), dim = 3)
             print("The shape of input_tensor_average is: ", input_tensor_average.shape)
 
-            h1 = model1(input_tensor.view(B*N, C, T, H, W))
             h1_diff = model1(input_tensor_diff.view(B*N, C, T-1, H, W))
-            h1_average = model1(input_tensor_average.view(B*N, C, T, H, W))
-            h2 = model2(input_tensor.view(B*N, C, T, H, W))
+            h1_average = model1(input_tensor_average.view(B*N, C, T-1, H, W))
             h2_diff = model2(input_tensor_diff.view(B*N, C, T-1, H, W))
-            h2_average = model2(input_tensor_average.view(B*N, C, T, H, W))
-
-            # # kind 1
+            h2_average = model2(input_tensor_average.view(B*N, C, T-1, H, W))
+            
+            # kind 1
             if test:
-                h1 = h1.reshape(B, N, -1) # B, N, D
                 h1_diff = h1_diff.reshape(B, N, -1)
                 h1_average = h1_average.reshape(B, N, -1)
-                h2 = h2.reshape(B, N, -1)
                 h2_diff = h2_diff.reshape(B, N, -1)
                 h2_average = h2_average.reshape(B, N, -1)
-                if not concat:
-                    if diff:
-                        print("diff")
-                        print("average E1 and E2")
-                        h = torch.cat((h1, h1_diff), -1) + torch.cat((h2, h2_diff), -1)
-                        h = h/2
-                        features.append(h)
-                    elif average:
-                        print("average frames")
-                        print("average E1 and E2")
-                        h = torch.cat((h1, h1_average), -1) + torch.cat((h2, h2_average), -1)
-                        h = h/2
-                        features.append(h)
-                    else:
-                        print("0")
-                        print("average E1 and E2")
-                        h = (h1+h2)/2
-                        features.append(h)
-                else:
-                    if diff:
-                        print("diff")
-                        print("concat E1 and E2")
-                        d1 = torch.cat((h1, h1_diff), -1)
-                        d2 = torch.cat((h2, h2_diff), -1)
-                        features.append(torch.cat((d1, d2), -1))
-                    elif average:
-                        print("average frames")
-                        print("concat E1 and E2")
-                        a1 = torch.cat((h1, h1_average), -1)
-                        a2 = torch.cat((h2, h2_average), -1)
-                        features.append(torch.cat((a1, a2), -1))
-                    else:
-                        print("0")
-                        print("concat E1 and E2")
-                        features.append(torch.cat((h1, h2), -1))
+                h = h1_diff + h1_average + h2_diff + h2_average
+                features.append(h)
                 label_lst.append(label)
             # kind 2
             else:
-                if not concat:
-                    if diff:
-                        print("diff")
-                        print("average E1 and E2")
-                        h = torch.cat((h1, h1_diff), -1) + torch.cat((h2, h2_diff), -1)
-                        h = h/2
-                        features.append(h)
-                    elif average:
-                        print("average frames")
-                        print("average E1 and E2")
-                        h = torch.cat((h1, h1_average), -1) + torch.cat((h2, h2_average), -1)
-                        h = h/2
-                        features.append(h)
-                    else:
-                        print("0")
-                        print("average E1 and E2")
-                        h = (h1+h2)/2
-                        features.append(h)
-                else:
-                    if diff:
-                        print("diff")
-                        print("concat E1 and E2")
-                        d1 = torch.cat((h1, h1_diff), -1)
-                        d2 = torch.cat((h2, h2_diff), -1)
-                        features.append(torch.cat((d1, d2), -1))
-                    elif average:
-                        print("average frames")
-                        print("concat E1 and E2")
-                        a1 = torch.cat((h1, h1_average), -1)
-                        a2 = torch.cat((h2, h2_average), -1)
-                        features.append(torch.cat((a1, a2), -1))
-                    else:
-                        print("0")
-                        print("concat E1 and E2")
-                        features.append(torch.cat((h1, h2), -1))
+                h = h1_diff + h1_average + h2_diff + h2_average
+                features.append(h)
                 label_lst.append(torch.ones(B,N)*label)
-
+            
             i += 1
             if i % 10 == 0:
                 print(i)
@@ -229,15 +156,15 @@ def extract_features(loader, model1, model2, test=True, diff=False, average=Fals
     return h_total, label_total
 
 
-def perform_knn(model1, model2, train_loader, test_loader, k=1, diff = False, average = False, concat=False):
+def perform_knn(model1, model2, train_loader, test_loader, k=1):
     model1.eval()
     model2.eval()
 
     ssl_evaluator = Retrieval2Encoders(model1=model1, model2=model2, k=k, device=cuda, num_seq=args.num_seq)
-    h_train, l_train = extract_features(train_loader, model1, model2, diff=diff, average=average, concat=concat)
+    h_train, l_train = extract_features(train_loader, model1, model2)
 
     train_acc = ssl_evaluator.knn(h_train, l_train, k=1)
-    h_test, l_test = extract_features(test_loader, model1, model2, diff=diff, average=average, concat=concat)
+    h_test, l_test = extract_features(test_loader, model1, model2)
     acc1, acc5, acc10  = ssl_evaluator.eval(h_test, l_test, l_train)
 
     # train_acc, val_acc = ssl_evaluator.fit(train_loader, test_loader)
@@ -272,18 +199,7 @@ def main():
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'hmdb_knn.log'), level=logging.INFO)
     logging.info('Started')
     logging.info('Test when using features from both encoders')
-    
-    if args.diff:
-        logging.info(f"k-nn accuracy using differences between frames\n")
-    elif args.average:
-        logging.info(f"k-nn accuracy using average across frames\n")
-    else:
-        logging.info(f"k-nn accuracy using original frames \n")  
-
-    if not args.concat:
-        logging.info('Average features from two encoders')
-    else:
-        logging.info('Concatenate features from two encoders')
+    logging.info('The extracted features is computed as f_1(dt) + f_1(avg) + f_2(dt) + f_2(avg)')
         
     if not args.random:
         logging.info(ckpt_path1)
@@ -424,14 +340,14 @@ def main():
     # random weight
     if args.random:
         logging.info(f"k-nn accuracy performed with random weight\n")
-        perform_knn(encoder1, encoder2, train_loader, test_loader, args.k, args.diff, args.average, args.concat)
+        perform_knn(encoder1, encoder2, train_loader, test_loader, args.k)
     elif args.kinetics:
         logging.info(f"k-nn accuracy performed with kinetics weight\n")
-        perform_knn(encoder1,encoder2, train_loader, test_loader, args.k, args.diff, args.average, args.concat)
+        perform_knn(encoder1,encoder2, train_loader, test_loader, args.k)
     else:
         # after training
         logging.info(f"k-nn accuracy performed after ssl\n")
-        perform_knn(encoder1, encoder2, train_loader, test_loader, args.k, args.diff, args.average, args.concat)
+        perform_knn(encoder1, encoder2, train_loader, test_loader, args.k)
 
 
 
@@ -439,9 +355,5 @@ def main():
 if __name__ == '__main__':
     main()
 
-# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400
-# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed233 --epoch_num 400 --concat
-# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400
-# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --concat
-# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400
-# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --concat
+
+# python evaluation/eval_retrieval_self_emergence.py --ckpt_folder /data/checkpoints_yehengz/2s2p_rdra_mixed/ucf_rd1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_feature_size363_projection1452_proj_hidden1452_epochs400_seed233_operation_Summation_prob_derivative1.0_prob_average1.0_width_deduc_ratio1.41_stem_deductFalse --epoch_num 400 --gpu '6' --width_deduction_ratio 1.41
