@@ -199,10 +199,12 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
         # random differentiation step
         # if rand:
-        rand_diff = False
+        
         if random.random() < 0.5:
             video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
             rand_diff = True
+        else:
+            rand_diff = False
         
         # scheduled differentiation step
         if diff: # The shape of video is [B, N, C, T, H, W]
@@ -512,6 +514,6 @@ def main():
 if __name__ == '__main__':
     main()
 
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDi.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 1.0 --feature_size 512 --projection 2048 --proj_hidden 2048
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDi.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 1.41 --feature_size 363 --projection 1452 --proj_hidden 1452
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDi.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 2.0 --feature_size 256 --projection 1024 --proj_hidden 1024
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDiG.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 1.0 --feature_size 512 --projection 2048 --proj_hidden 2048
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDiG.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 1.41 --feature_size 363 --projection 1452 --proj_hidden 1452
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDiG.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 2.0 --feature_size 256 --projection 1024 --proj_hidden 1024
