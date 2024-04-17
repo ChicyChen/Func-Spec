@@ -105,7 +105,9 @@ parser.add_argument('--fraction', default=1.0, type=float)
 parser.add_argument('--seed', default=233, type = int) # add a seed argument that allows different random initilization of weight
 parser.add_argument('--concat', action='store_true') # default value is false, this arugment decide if we are summing two output from each encoders or concatenating them
 parser.add_argument('--prob_derivative', default = 0.5, type = float)
-parser.add_argument('--prob_average', default = 0.5, type = float)
+parser.add_argument('--prob_average', default = 0.5, type = float) # cry for a better name for this argument!!!
+parser.add_argument('--prob_2nd_derivative', default = 0.0, type = float)
+parser.add_argument('--first_frame_duplicated', action='store_true')
 parser.add_argument('--width_deduction_ratio', default = 1.0, type = float)
 parser.add_argument('--stem_deduct', action='store_true') # default is false
 
@@ -205,9 +207,15 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
         video_ra = video_ra.to(gpu)
         if random.random() < args.prob_derivative:
             video_rd = video_rd[:,:,:,1:,:,:] - video_rd[:,:,:,:-1,:,:]
-        B, N, C, T, H, W = video_rd.shape
+            if random.random() < args.prob_2nd_derivative:
+                video_rd = video_rd[:,:,:,1:,:,:] - video_rd[:,:,:,:-1,:,:]
+        
+        B, N, C, T, H, W = video_rd.shape # keep shape of two input constant
         if random.random() < args.prob_average:
-            frame_average = torch.mean(video_ra, dim = 3, keepdim = True)
+            if args.first_frame_duplicated:
+                frame_average = video_ra[:,:,:,0:1,:,:]  
+            else:
+                frame_average = torch.mean(video_ra, dim = 3, keepdim = True)
             video_ra = torch.repeat_interleave(frame_average, T, dim = 3)
         else:
             video_ra = video_ra[:,:,:,0:T,:,:]
@@ -279,15 +287,19 @@ def main():
         dataname = 'ucf'
     
     if args.concat:
-        operation = "_concatenation"
+        operation = "_concat"
         print('We are using concatenation.')
     else:
-        operation = "_summation"
+        operation = "_sum"
         print('We are using summation')
 
+    if args.first_frame_duplicated:
+        spatial_op = 'duplicated_1st'
+    else:
+        spatial_op = "averaged"
 
-    ckpt_folder='/data/checkpoints_yehengz/2s2p_batchwise_rdra/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_feature_size%s_projection%s_proj_hidden%s_epochs%s_seed%s_operation%s_prob_derivative%s_prob_average%s_width_deduc_ratio%s_stem_deduct%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.feature_size, args.projection, args.proj_hidden, args.epochs, args.seed, operation, args.prob_derivative, args.prob_average, args.width_deduction_ratio, args.stem_deduct)
+    ckpt_folder='/data/checkpoints_yehengz/2s2p_batch_guide/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_feature_size%s_projection%s_proj_hidden%s_epochs%s_seed%s_op%s_prob_ddt%s_prob_static%s_prob_d2dt2%s_spatial_op_%s_width_deduc_ratio%s_stem_deduct%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.feature_size, args.projection, args.proj_hidden, args.epochs, args.seed, operation, args.prob_derivative, args.prob_average, args.prob_2nd_derivative, spatial_op, args.width_deduction_ratio, args.stem_deduct)
 
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
@@ -478,4 +490,4 @@ def main():
 if __name__ == '__main__':
     main()
 
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2p_batchwise_rdra.py --sym_loss --infonce --epochs 400 --seed 233 --prob_derivative 0.25 --prob_average 0.75 --width_deduction_ratio 1.41 --feature_size 363 --projection 1452 --proj_hidden 1452
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2p_batchwise_rdra.py --sym_loss --infonce --epochs 400 --seed 233 --prob_derivative 0.75 --prob_average 0.25 --first_frame_duplicated --width_deduction_ratio 1.41 --feature_size 363 --projection 1452 --proj_hidden 1452

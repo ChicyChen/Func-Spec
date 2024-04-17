@@ -1,3 +1,4 @@
+import copy
 import os
 import sys
 from importlib import reload
@@ -9,7 +10,7 @@ sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 sys.path.append("/home/yehengz/Func-Spec/resnet_edit")
 
-from vicclr2s2pViDiDiG import VICCLR2S2PVIDIDIG
+from vicclr2s2pRViDiDiG import VICCLR2S2PRVIDIDIG
 from resnet import r3d_18
 
 import random
@@ -105,6 +106,9 @@ parser.add_argument('--seed', default=233, type = int) # add a seed argument tha
 parser.add_argument('--width_deduction_ratio', default = 1.0, type = float)
 parser.add_argument('--stem_deduct', action='store_true') # default is false
 
+parser.add_argument('--reverse', action='store_true')
+
+
 def adjust_learning_rate(args, optimizer, loader, step):
     max_steps = args.epochs * len(loader)
     warmup_steps = args.warmup_epochs * len(loader)
@@ -182,7 +186,7 @@ class LARS(optim.Optimizer):
                 p.add_(mu, alpha=-g["lr"])
 
 
-def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scaler=None, train=True, diff=False, mix=False, mix2=False):
+def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scaler=None, train=True, diff_e1=False, mix_e1=False, mix2_e1=False, diff_e2=False, mix_e2=False, mix2_e2=False):
     if train:
         model.train()
     else:
@@ -194,36 +198,51 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
         # TODO: be careful with video size
         # N = 2 by default
-        video, label = data # B, N, C, T, H, W
+        video_e1, label = data # B, N, C, T, H, W
+        video_e2 = copy.deepcopy(video_e1)
         label = label.to(gpu)
-        video = video.to(gpu)
+        video_e1 = video_e1.to(gpu)
+        video_e2 = video_e2.to(gpu)
 
         # random differentiation step
-        # if rand:
+        if args.reverse:
+            if random.random() < 0.5:
+                video_e1 = video_e1[:,:,:,1:,:,:] - video_e1[:,:,:,:-1,:,:]
         
         if random.random() < 0.5:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            rand_diff = True
-        else:
-            rand_diff = False
+            video_e2 = video_e2[:,:,:,1:,:,:] - video_e2[:,:,:,:-1,:,:]
+
+
         
-        # scheduled differentiation step
-        if diff: # The shape of video is [B, N, C, T, H, W]
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-        if mix:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,1,:,:,:,:] = video_diff[:,1,:,:,:,:]
-        if mix2:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,0,:,:,:,:] = video_diff[:,0,:,:,:,:]
+        # scheduled differentiation step on input to encoder 1
+        if diff_e1: # The shape of video is [B, N, C, T, H, W]
+            video_e1 = video_e1[:,:,:,1:,:,:] - video_e1[:,:,:,:-1,:,:]
+        if mix_e1:
+            video_diff_e1 = video_e1[:,:,:,1:,:,:] - video_e1[:,:,:,:-1,:,:]
+            video_e1 = video_e1[:,:,:,:-1,:,:]
+            video_e1[:,1,:,:,:,:] = video_diff_e1[:,1,:,:,:,:]
+        if mix2_e1:
+            video_diff_e1 = video_e1[:,:,:,1:,:,:] - video_e1[:,:,:,:-1,:,:]
+            video_e1 = video_e1[:,:,:,:-1,:,:]
+            video_e1[:,0,:,:,:,:] = video_diff_e1[:,0,:,:,:,:]
+
+        # scheduled differentiation step on input to encoder 1
+        if diff_e2: # The shape of video is [B, N, C, T, H, W]
+            video_e2 = video_e2[:,:,:,1:,:,:] - video_e2[:,:,:,:-1,:,:]
+        if mix_e2:
+            video_diff_e2 = video_e2[:,:,:,1:,:,:] - video_e2[:,:,:,:-1,:,:]
+            video_e2 = video_e2[:,:,:,:-1,:,:]
+            video_e2[:,1,:,:,:,:] = video_diff_e2[:,1,:,:,:,:]
+        if mix2_e2:
+            video_diff_e2 = video_e2[:,:,:,1:,:,:] - video_e2[:,:,:,:-1,:,:]
+            video_e2 = video_e2[:,:,:,:-1,:,:]
+            video_e2[:,0,:,:,:,:] = video_diff_e2[:,0,:,:,:,:]
 
         lr = adjust_learning_rate(args, optimizer, train_loader, step)
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
-            loss = model(video, False, epoch)
+            loss = model(video_e1, video_e2, False, epoch)
             if train:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -245,7 +264,7 @@ def main():
     print(args)
     gpu = torch.device(args.device)
 
-    model_select = VICCLR2S2PVIDIDIG
+    model_select = VICCLR2S2PRVIDIDIG
 
     if args.infonce:
         ind_name = 'nce2s'
@@ -387,21 +406,30 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
-        
-        # # TODO: differentiation control
-        if i%4 == 0:
-            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
-            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        elif i%4 == 1:
-            train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        elif i%4 == 2:
-            train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
+        # case 1: encoder 1 sees reverse-ordered ViDiDi, encoder 2 sees ViDiDi
+        if args.reverse: 
+            if i%4 == 0:
+                train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff_e2=True)
+            elif i%4 == 1:
+                train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2_e1=True, mix_e2=True)
+            elif i%4 == 2:
+                train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix_e1 = True, mix2_e2=True)
+            else:
+                train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff_e1=True)
+        # case 2: encoder 1 sees original frames, encoder 2 sees ViDiDi
         else:
-            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True)
-        # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+            if i%4 == 0:
+                train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff_e2=True)
+                # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+            elif i%4 == 1:
+                train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix_e2=True)
+                # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
+            elif i%4 == 2:
+                train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2_e2=True)
+                # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
+            else:
+                train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+
 
         # current_time = time.time()
         if args.rank == 0:
@@ -515,10 +543,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDiG.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 1.0 --feature_size 512 --projection 2048 --proj_hidden 2048
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDiG.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 1.41 --feature_size 363 --projection 1452 --proj_hidden 1452
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDiG.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 2.0 --feature_size 256 --projection 1024 --proj_hidden 1024
-
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s2pViDiDiG.py --sym_loss --infonce --epochs 400 --seed 233 --width_deduction_ratio 1.41 --feature_size 363 --projection 1452 --proj_hidden 1452 --base_lr 0.12 --wd 1e-5 --warmup_epochs 40
