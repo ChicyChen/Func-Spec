@@ -32,7 +32,7 @@ layerAll_processing_PCA_test(layername, dataroot_read, dataroot_write, method_PC
 
 
 
-
+ 
 
 %% Encoding for stream-wise encoding
 addpath('/ll3/home/choi574/git_libs/matlab/encoding/function_module');

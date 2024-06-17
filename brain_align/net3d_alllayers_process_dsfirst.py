@@ -30,17 +30,6 @@ import scipy.stats
 import numpy as np
 # import cupy as np
 
-import argparse
-
-
-parser = argparse.ArgumentParser()
-
-parser.add_argument('--root', default='dorsal_feature/adjust4_encoder2_input3_srate0.5', type=str)
-parser.add_argument('--srate', default=6, type=float)
-
-         
-args = parser.parse_args()
-
 def spm_hrf(TR,p=[6,16,1,1,6,0,32]):
     """ An implementation of spm_hrf.m from the SPM distribution
 
@@ -81,18 +70,23 @@ p: list with parameters of the two gamma functions:
     return hrf
 
 # root = "batch_d75a25/np_encoder1_input0"
-root = args.root
+root = "base/p1d_encoder_input0"
 folder = os.path.join(root, "raw")
 out_folder = os.path.join(root, "downsampled")
 if not os.path.exists(out_folder):
     os.makedirs(out_folder)
+# return_layers = ['avgpool', 'layer4', 'layer3', 'layer2', 'layer1', 'stem']
+return_layers = ['layer4', 'layer3', 'layer2', 'layer1', 'stem']
+# return_layers = ['layer3', 'layer2', 'layer1', 'stem']
+# return_layers = ['stem']
+
+# return_layers = ['avgpool']
 
 
-return_layers = ['stem', 'layer1.0', 'layer1.1', 'layer2.0', 'layer2.1', 'layer3.0', 'layer3.1', 'layer4.0', 'layer4.1']
 
 # create hrf
 p  = [5, 16, 1, 1, 6, 0, 32]
-srate = args.srate
+srate = 2
 hrf = spm_hrf(1/srate, p)
 
 
@@ -115,39 +109,23 @@ for key in return_layers:
 
     T,D = features[0].shape
     features = np.concatenate(features)
-    t1,D = features.shape
     tests = np.concatenate(tests)
-    t2,_ = tests.shape
+
     print("Standardize layer:", key)
 
     # standardize
     scaler = StandardScaler()
     scaler.fit(features)
     features = scaler.transform(features)
+
+    # scaler2 = StandardScaler()
+    # scaler2.fit(tests)
+    # tests = scaler2.transform(tests)
+
     tests = scaler.transform(tests)
 
 
-    print("PCA layer:", key)
 
-    # PCA reduction while making sure 0.99 variance is preserved
-    # n_dlast = int(D/2.5)
-    n_dlast = 12000
-    n_components = 0.99
-    try:
-        pca = PCA(n_components=n_components, svd_solver='full')
-        features = pca.fit_transform(features)
-        tests = pca.transform(tests) # use the same PCA as train
-    except:
-        # for n_d in range(n_dlast, np.min(features.shape)):
-        n_d = n_dlast
-        print("Perform PCA with dim:", n_d)
-        pca = IncrementalPCA(n_components=n_d, batch_size=n_d)
-        pca.fit(features)
-        print(np.sum(pca.explained_variance_ratio_)) 
-        # if np.sum(pca.explained_variance_ratio_) >= n_components:
-        #     break
-        features = pca.transform(features)
-        tests = pca.transform(tests) # use the same PCA as train
 
     print("HRF layer:", key)
 
@@ -157,29 +135,65 @@ for key in return_layers:
     for i in range(18):
         features_pca = features[i*T:(i+1)*T,:]
         features_hrf = np.apply_along_axis(lambda m: np.convolve(m, hrf, mode='full'), axis=0, arr=features_pca)
-        features_ds = features_hrf[int(4*srate):,:]
-        features_ds = features_ds[::int(2*srate),:]
-        features_ds = features_ds[:240,:]
+        features_ds = features_hrf[4*srate:4*srate+features_pca.shape[0]+1,:]
+        features_ds = features_ds[::2*srate,:]
         # print(features_ds.shape)
         np.save(os.path.join(out_folder, f'ds_{key}_features{i+1}.npy'), features_ds) # T, d
         features_hrf_list.append(features_ds)
     for i in range(5):
         tests_pca = tests[i*T:(i+1)*T,:]
         tests_hrf = np.apply_along_axis(lambda m: np.convolve(m, hrf, mode='full'), axis=0, arr=tests_pca)
-        # features_ds_test = tests_hrf[4*srate:4*srate+features_pca.shape[0]+1,:]
-        features_ds_test = tests_hrf[int(4*srate):,:]
-        features_ds_test = features_ds_test[::int(2*srate),:]
-        features_ds_test = features_ds_test[:240,:]
+        features_ds_test = tests_hrf[4*srate:4*srate+features_pca.shape[0]+1,:]
+        features_ds_test = features_ds_test[::2*srate,:]
         np.save(os.path.join(out_folder, f'ds_{key}_features_test{i+1}.npy'), features_ds_test) # T, d
         tests_hrf_list.append(features_ds_test)
 
     print("Saving layer:", key)
 
     # save concatenated features
-    features_hrf_list = np.concatenate(features_hrf_list)
-    tests_hrf_list = np.concatenate(tests_hrf_list)
-    np.save(os.path.join(out_folder, f'ds_{key}_features_all.npy'), features_hrf_list)
-    np.save(os.path.join(out_folder, f'ds_{key}_features_test_all.npy'), tests_hrf_list)
+    features = np.concatenate(features_hrf_list)
+    tests = np.concatenate(tests_hrf_list)
+
+
+
+
+
+    print("PCA layer:", key)
+
+    # PCA reduction while making sure 0.99 variance is preserved
+    # n_dlast = int(D/2.5)
+    n_dlast = int(D/2.5)
+    n_components = 0.99
+    try:
+        pca = PCA(n_components=n_components, svd_solver='full')
+        features = pca.fit_transform(features)
+        tests = pca.transform(tests) # use the same PCA as train
+        print("Perform PCA with dim:", pca.n_components_)
+        n_dlast = pca.n_components_
+    except:
+        for n_d in range(n_dlast, np.min(features.shape)):
+            print("Perform PCA with dim:", n_d)
+            pca = IncrementalPCA(n_components=n_d, batch_size=n_d)
+            pca.fit(features)
+            print(np.sum(pca.explained_variance_ratio_)) 
+            if np.sum(pca.explained_variance_ratio_) >= n_components:
+                break
+            features = pca.transform(features)
+            tests = pca.transform(tests) # use the same PCA as train
+
+        # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # features = torch.from_numpy(features).to(device)
+        # Covariance = features.t().mm(features) / (features.size(0)-1.0)
+        # U, S, V = torch.svd(Covariance)
+        # U1 = U[ :, 0:n_dlast]
+        # V1 = V[0:n_dlast,:]
+        # XR = features.mm(U1)
+        # var_preserved = S[0:n_dlast].sum() / S.sum()
+        # print(var_preserved) 
+
+    
+    np.save(os.path.join(out_folder, f'dsfirst_{key}_features_all.npy'), features)
+    np.save(os.path.join(out_folder, f'dsfirst_{key}_features_test_all.npy'), tests)
 
     print("*******************************")
 

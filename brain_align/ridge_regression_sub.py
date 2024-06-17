@@ -6,11 +6,18 @@ import mat73
 import pickle
 import copy
 import os
+from sklearn.model_selection import train_test_split
+
+# python ridge_regression_sub.py
+
+do_pca = False
+
+print("Load signal")
 
 fmripath = '/data/3/human/Human_Visual_Experiments/video_fmri_dataset/subject1/fmri/training_fmri.mat'
 fmripath_test = '/data/3/human/Human_Visual_Experiments/video_fmri_dataset/subject1/fmri/testing_fmri.mat'
 fmri = sio.loadmat(fmripath)
-fmri_test = mat73.loadmat(fmripath_test)
+test = mat73.loadmat(fmripath_test)
 with open("ventral", "rb") as fp:
     ventral_idx = pickle.load(fp)
 with open("dorsal", "rb") as fp2:
@@ -21,28 +28,89 @@ with open("lateral", "rb") as fp3:
 data1 = fmri['fmri'][0][0][0]
 data2 = fmri['fmri'][0][0][1]
 data_avg = (data1 + data2) / 2
-session1 = data_avg[:,:,0].T 
-session1_sub = session1[:, ventral_idx] # (240, subnum): T, D
+
+fmri_train = []
+for i in range(18):
+    fmri_train.append(data_avg[:,:,i].T)
+fmri_train = np.concatenate(fmri_train) # (240*18, 59412): T, n
+print("fmri data size:", fmri_train.shape)
+
+fmri_test = []
+for i in range(5):
+    fmri_test.append(np.mean(test['fmritest'][f'test{i+1}'], axis = 2).T)
+fmri_test = np.concatenate(fmri_test) # (240*5, 59412): T, n
+
+fmri_train = fmri_train[:, ventral_idx]
+fmri_test = fmri_test[:, ventral_idx]
+fmri_test_shuffle_time = copy.deepcopy(fmri_test)
+np.random.shuffle(fmri_test_shuffle_time)
+print("selected fmri data size:", fmri_train.shape)
+
+print("Load features")
 
 # features = torch.load("features_ds.pt") # (240, 367): T, d
 # features_test = torch.load("features_ds_test.pt") # (240, 367): T, d
 # load processed model features
-folder = "encoder1"
-features_path = os.path.join(folder, "ds_features_all.pt")
-features_test_path = os.path.join(folder, "ds_features_test_all.pt")
+folder = "base/adjust_encoder_input0/together"
+# features_path = os.path.join(folder, "ds_features_all.npy")
+# features_test_path = os.path.join(folder, "ds_features_test_all.npy")
+features_path = os.path.join(folder, f"ds_features_all_2pca{do_pca}.npy")
+features_test_path = os.path.join(folder, f"ds_features_test_all_2pca{do_pca}.npy")
 features = np.load(features_path) # (240*18, 367): T, d
 features_test = np.load(features_test_path) # (240*5, 367): T, d
 
-clf = Ridge(alpha=10.0)
-clf.fit(features, session1_sub)
-score = clf.score(features, session1_sub)
-print(score)
+print(features.shape)
 
-test1 = np.mean(fmri_test['fmritest']['test1'], axis = 2)
-test1 = test1.T
-test1_sub = test1[:, ventral_idx]
-test1_sub_shuffle_time = copy.deepcopy(test1_sub)
-np.random.shuffle(test1_sub_shuffle_time)
+
+print("Cross validation")
+
+# alpha_list = [1.0, 10.0, 100.0, 1000.0, 10000.0]
+alpha_list = [100000.0]
+
+acc_list = np.zeros(len(alpha_list))
+
+for idx in range(len(alpha_list)):
+    alpha = alpha_list[idx]
+
+
+    X_train, X_test, y_train, y_test = train_test_split(features, fmri_train, test_size = 0.25, random_state = 42)
+
+    clf = Ridge(alpha=alpha)
+    clf.fit(X_train, y_train)
+    score = clf.score(X_train, y_train)
+    print("Score:", score)
+
+    predict_test = clf.predict(X_test)  # (240, subnum)
+    predict_train = clf.predict(X_train) # (240, subnum)
+
+    ventral_train_arr = np.zeros(len(ventral_idx))
+    ventral_test_arr = np.zeros(len(ventral_idx))
+
+    # for i in range(nd):
+    for i in range(len(ventral_idx)):
+        tti = np.corrcoef(predict_train[:,i], y_train[:,i])[0,1]
+        cci = np.corrcoef(predict_test[:,i], y_test[:,i])[0,1]
+        ventral_train_arr[i] = tti
+        ventral_test_arr[i] = cci
+
+    acc_list[idx] = np.mean(ventral_test_arr)
+    print("Venral:", np.mean(ventral_train_arr), np.mean(ventral_test_arr))
+    print("Venral:", np.max(ventral_test_arr), np.min(ventral_test_arr))
+    # print("Dorsal:", np.mean(dorsal_train_arr), np.mean(dorsal_test_arr))
+    # print("Lateral:", np.mean(lateral_train_arr), np.mean(lateral_test_arr))
+
+best_alpha = alpha_list[np.argmax(acc_list)]
+print("Best alpha:", best_alpha)
+print("Best acc:", np.max(acc_list))
+
+print("Final pass")
+
+clf = Ridge(alpha=best_alpha)
+clf.fit(features, fmri_train)
+score = clf.score(features, fmri_train)
+print("Score:", score)
+
+
 predict_test = clf.predict(features_test)  # (240, subnum)
 predict_train = clf.predict(features) # (240, subnum)
 
@@ -51,36 +119,16 @@ ventral_train_arr = np.zeros(len(ventral_idx))
 ventral_test_arr = np.zeros(len(ventral_idx))
 ventral_testrand_arr = np.zeros(len(ventral_idx))
 
-dorsal_train_arr = np.zeros(len(dorsal_idx))
-dorsal_test_arr = np.zeros(len(dorsal_idx))
-
-lateral_train_arr = np.zeros(len(lateral_idx))
-lateral_test_arr = np.zeros(len(lateral_idx))
-
 
 # for i in range(nd):
 for i in range(len(ventral_idx)):
-    tti = np.corrcoef(predict_train[:,i], session1_sub[:,i])[0,1]
-    cci = np.corrcoef(predict_test[:,i], test1_sub[:,i])[0,1]
-    rri = np.corrcoef(predict_test[:,i], test1_sub_shuffle_time[:,i])[0,1]
+    tti = np.corrcoef(predict_train[:,i], fmri_train[:,i])[0,1]
+    cci = np.corrcoef(predict_test[:,i], fmri_test[:,i])[0,1]
+    rri = np.corrcoef(predict_test[:,i], fmri_test_shuffle_time[:,i])[0,1]
     ventral_train_arr[i] = tti
     ventral_test_arr[i] = cci
     ventral_testrand_arr[i] = rri
-    # elif i in dorsal_idx:
-    #     tti = np.corrcoef(predict_train[:,i], session1[:,i])[0,1]
-    #     cci = np.corrcoef(predict_test[:,i], test1[:,i])[0,1]
-    #     dorsal_train_arr[num2] = tti
-    #     dorsal_test_arr[num2] = cci
-    #     num2 += 1
-    # elif i in lateral_idx:
-    #     tti = np.corrcoef(predict_train[:,i], session1[:,i])[0,1]
-    #     cci = np.corrcoef(predict_test[:,i], test1[:,i])[0,1]
-    #     lateral_train_arr[num3] = tti
-    #     lateral_test_arr[num3] = cci
-    #     num3 += 1
 
+acc_list[idx] = np.mean(ventral_test_arr)
 print("Venral:", np.mean(ventral_train_arr), np.mean(ventral_test_arr), np.mean(ventral_testrand_arr))
 print("Venral:", np.max(ventral_test_arr), np.min(ventral_test_arr))
-# print("Dorsal:", np.mean(dorsal_train_arr), np.mean(dorsal_test_arr))
-# print("Lateral:", np.mean(lateral_train_arr), np.mean(lateral_test_arr))
-

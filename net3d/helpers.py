@@ -324,12 +324,15 @@ class LatentODEblock(nn.Module):
 
 # Scott TODO: Read and understand
 class NetHook(nn.Module):
-    def __init__(self, net, layer = -2):
+    def __init__(self, net, layer = -2, pool = False, size = (1,1,1), pool_layer = nn.AdaptiveAvgPool3d, only_time = False): # 1, nn.AdaptiveAvgPool1d
         super().__init__()
         self.net = net
         self.layer = layer
         self.hidden = {}
         self.hook_registered = False
+        self.pool = pool
+        self.pool_layer = pool_layer(size) # reduce dimension
+        self.only_time = only_time
 
     def _find_layer(self):
         if type(self.layer) == str:
@@ -342,7 +345,15 @@ class NetHook(nn.Module):
 
     def _hook(self, _, input, output):
         device = input[0].device
-        self.hidden[device] = flatten(output)
+        if self.pool:
+            self.hidden[device] = flatten(self.pool_layer(output))
+            if self.only_time:
+                output = output.permute(0,1,3,4,2)
+                _,_,H,W,_ = output.size()
+                self.pool_layer = nn.AdaptiveAvgPool3d((H,W,1))
+                self.hidden[device] = flatten(self.pool_layer(output).permute(0,1,4,2,3)) # nn.AdaptiveAvgPool1d
+        else:
+            self.hidden[device] = flatten(output)
 
     def _register_hook(self):
         layer = self._find_layer()

@@ -1,32 +1,61 @@
-from sklearn.linear_model import Ridge, RidgeCV, Lasso
+import h5py
 import numpy as np
 import scipy.io as sio
-import torch
 import mat73
+from sklearn.linear_model import Ridge, RidgeCV, Lasso
 import pickle
+
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 import os
 from scipy.io import savemat
 
-import logging
-import argparse
 
-parser = argparse.ArgumentParser()
+filename = "/data/3/human/Human_Visual_Experiments/video_fmri_dataset/stimuli/alexnet/AlexNet_feature_maps_pcareduced_concatenated.h5"
+h5 = h5py.File(filename,'r')
+all_keys = list(h5.keys())
 
-parser.add_argument('--root', default='dorsal_feature/adjust4_encoder2_input3_srate0.5', type=str)
-parser.add_argument('--pca', action='store_true')
-
-parser.add_argument('--layer_wise', action='store_true')
-parser.add_argument('--layer_name', default='layer1.0', type=str)
-
-
-args = parser.parse_args()
+features = []
+for key in all_keys:
+    feature_key = np.array(h5[key]['data'])
+    features.append(feature_key)
+features = np.vstack(features).T
+print(features.shape)
 
 
-logging.basicConfig(filename=os.path.join(args.root, 'net3d_vic_train.log'), level=logging.INFO)
-logging.info('Started')
+features_test = []
+for idx in range(5):
+    test_list = []
+    filename = f"/data/3/human/Human_Visual_Experiments/video_fmri_dataset/stimuli/alexnet/AlexNet_feature_maps_pcareduced_test{idx+1}.h5"
+    h5 = h5py.File(filename,'r')
+    all_keys = list(h5.keys())
+    for key in all_keys:
+        test_key = np.array(h5[key]['data'])
+        test_list.append(test_key)
+    test_list = np.vstack(test_list).T
+    features_test.append(test_list)
+features_test = np.vstack(features_test) 
+print(features_test.shape)
 
-# do_pca = True
-do_pca = args.pca
+
+
+"""
+print("Standardize")
+scaler = StandardScaler()
+scaler.fit(features)
+features = scaler.transform(features)
+features_test = scaler.transform(features_test)
+"""
+
+print("PCA")
+n_components = 0.99
+pca = PCA(n_components=n_components, svd_solver='full')
+features = pca.fit_transform(features)
+features_test = pca.transform(features_test) # use the same PCA as train
+print(features.shape)
+print(features_test.shape)
+
+
 
 print("Load fmri data")
 # load train fmri data, average, and concatenate
@@ -48,17 +77,6 @@ for i in range(5):
     fmri_test.append(np.mean(test['fmritest'][f'test{i+1}'], axis = 2).T)
 fmri_test = np.concatenate(fmri_test) # (240*5, 59412): T, n
 
-root = args.root
-folder = os.path.join(root,"together")
-features_path = os.path.join(folder, f"ds_features_all_2pca{do_pca}.npy")
-features_test_path = os.path.join(folder, f"ds_features_test_all_2pca{do_pca}.npy")
-
-features = np.load(features_path) # (240*18, 367): T, d
-features_test = np.load(features_test_path) # (240*5, 367): T, d
-
-print("network data size:", features.shape)
-
-
 
 # cross validation
 kfold = 4
@@ -69,11 +87,11 @@ for i in range(kfold):
     train_idx = list(range(features.shape[0]))
     del train_idx[i*sub_train_size: (i+1)*sub_train_size]
     myCViterator.append((train_idx, val_idx))
-alpha_list = [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0]
+alpha_list = [0.01, 1.0, 100.0, 10000.0]
 clf = RidgeCV(alphas=alpha_list, cv=myCViterator).fit(features, fmri_train)
 alpha = clf.alpha_
 print("cross validation best alpha:", alpha)
-logging.info(f"cross validation best alpha: {alpha}")
+
 
 
 # final pass
@@ -84,7 +102,6 @@ predict_train = clf.predict(features) # (240*18, 59412)
 score_test = clf.score(features_test, fmri_test)
 score_train = clf.score(features, fmri_train)
 print("Scores:", score_train, score_test)
-logging.info(f"Scores: {score_train} {score_test}")
 
 
 
@@ -98,8 +115,7 @@ for i in range(nd):
     train_arr[i] = tti
     test_arr[i] = cci
 print("All:", np.mean(train_arr), np.mean(test_arr))
-logging.info(f"All: {np.mean(train_arr)} {np.mean(test_arr)}")
-fm = os.path.join(root, f"corr_pca{do_pca}.mat")
+fm = "haiguang.mat"
 fm_data = {"train": train_arr, "test": test_arr}
 savemat(fm, fm_data)
 best_acc = np.mean(test_arr)
@@ -149,9 +165,12 @@ print("Venral:", np.mean(ventral_train_arr), np.mean(ventral_test_arr), np.max(v
 print("Dorsal:", np.mean(dorsal_train_arr), np.mean(dorsal_test_arr), np.max(dorsal_test_arr))
 # print("Lateral:", np.mean(lateral_train_arr), np.mean(lateral_test_arr), np.max(lateral_test_arr))
 
-logging.info(f"Venral: {np.mean(ventral_train_arr)} {np.mean(ventral_test_arr)} {np.max(ventral_test_arr)}")
-logging.info(f"Dorsal: {np.mean(dorsal_train_arr)} {np.mean(dorsal_test_arr)} {np.max(dorsal_test_arr)}")
 
 
 
+# fmripath = "/data/3/human/Human_Visual_Experiments/video_fmri_dataset/stimuli/alexnet/AlexNet_feature_maps_processed_layer1_concatenated.mat"
+
+# h5 = h5py.File(fmripath,'r')
+
+# print(h5['lay_feat_concatenated'])
 

@@ -2,13 +2,17 @@ import nibabel as nb
 import numpy as np 
 import pickle
 
-ventral_list = [33, 35, 37, 41, 48, 56, 111, 163, 172]
+
+# ventral_list = [7, 22, 18, 153, 154, 160]
+ventral_list = [6,7,18,20,21,22,153,154,155,156,157,159,160,163,166]
 ventral_list2 = [item + 180 for item in ventral_list]
 
-dorsal_list = [34, 40, 54, 62, 95, 131, 142]
+# dorsal_list = [13, 19, 3, 152, 16, 17, 146, 145, 144, 48, 95, 49, 117, 50, 47, 42, 45, 46, 29, 10]
+dorsal_list = [2,3,10,11,13,15,16,17,19,23,31,48,49,50,158]
 dorsal_list2 = [item + 180 for item in dorsal_list]
 
-lateral_list = [20, 21, 42, 46, 48, 70, 76, 95, 159, 174]
+# lateral_list = [20, 21, 159, 128, 129, 130, 176]
+lateral_list = [128, 129, 130, 176, 47, 42, 45, 46, 29]
 lateral_list2 = [item + 180 for item in lateral_list]
 
 path = 'Q1-Q6_RelatedParcellation210.CorticalAreas_dil_Colors.32k_fs_LR.dlabel.nii'
