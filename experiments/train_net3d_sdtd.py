@@ -7,8 +7,10 @@ import argparse
 sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
+sys.path.append("/home/yehengz/Func-Spec/resnet_edit")
 
-from swinclr import SWINCLR
+from vicclrSDTD import VICCLRSDTD
+from resnet import r3d_18
 
 import random
 import math
@@ -33,19 +35,21 @@ from augmentation import *
 from distributed_utils import init_distributed_mode
 
 # python -m torch.distributed.launch --nproc_per_node=8 experiments/train_net3d.py --sym_loss
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --epochs 100 --base_lr 1e-4
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --sym_loss --epochs 12
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d.py --epochs 400 --batch_size 64 --sym_loss --base_lr 4.8 --projection 2048 --proj_hidden 2048 --pred_layer 0 --proj_layer 3 --cov_l 0.04 --std_l 1.0 --spa_l 0.0
 
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s.py --sym_loss --epochs 12
+# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_2s.py --sym_loss --epochs 400
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--frame_root', default='/data', type=str,
                     help='root folder to store data like UCF101/..., better to put in servers SSD \
                     default path is mounted from data server for the home directory')
 # --frame_root /data
-                    
+
 parser.add_argument('--gpu', default='0,1,2,3,4,5,6,7', type=str)
 
-parser.add_argument('--epochs', default=300, type=int,
+parser.add_argument('--epochs', default=400, type=int,
                     help='number of total epochs to run')
 parser.add_argument('--start_epoch', default=0, type=int,
                     help='manual epoch number (useful on restarts)')
@@ -59,32 +63,26 @@ parser.add_argument('--batch_size', default=64, type=int)
 # parser.add_argument('--lr', default=1e-4, type=float, help='learning rate')
 parser.add_argument('--wd', default=1e-6, type=float, help='weight decay')
 
-parser.add_argument('--random', action='store_true')
+parser.add_argument('--random', action='store_true') # default is false
 parser.add_argument('--num_seq', default=2, type=int)
 parser.add_argument('--seq_len', default=8, type=int)
 parser.add_argument('--downsample', default=3, type=int)
 parser.add_argument('--inter_len', default=0, type=int)    # does not need to be positive
 
-parser.add_argument('--sym_loss', action='store_true')
+parser.add_argument('--sym_loss', action='store_true') # default is false
 
-
-parser.add_argument('--feature_size', default=768, type=int)
+parser.add_argument('--feature_size', default=512, type=int)
 parser.add_argument('--projection', default=2048, type=int)
 parser.add_argument('--proj_hidden', default=2048, type=int)
 parser.add_argument('--proj_layer', default=3, type=int)
 
-
 parser.add_argument('--mse_l', default=1.0, type=float)
 parser.add_argument('--std_l', default=1.0, type=float)
 parser.add_argument('--cov_l', default=0.04, type=float)
-parser.add_argument('--infonce', action='store_true') # default is false
-parser.add_argument('--temperature', default = 0.1, type = float)
+parser.add_argument('--infonce', action='store_true') #default is false
 
 parser.add_argument('--base_lr', default=4.8, type=float)
-parser.add_argument('--warm_up', action = "store_true") #default value is false
-parser.add_argument('--warm_up_epochs', default=10, type=int)
-parser.add_argument('--end_lr_fraction', default=0.001, type=float)
-parser.add_argument('--freeze_pat_embd', action = "store_true")
+# parser.add_argument('--base_lr', default=1.2, type=float)
 
 # Running
 parser.add_argument("--num-workers", type=int, default=128)
@@ -108,21 +106,23 @@ parser.add_argument('--minik', action='store_true')
 parser.add_argument('--k400', action='store_true')
 parser.add_argument('--fraction', default=1.0, type=float)
 
+parser.add_argument('--seed', default=233, type = int) # add a seed argument that allows different random initilization of weight
+parser.add_argument('--concat', action='store_true') # default value is false, this arugment decide if we are summing two output from each encoders or concatenating them
+parser.add_argument('--width_deduction_ratio', default = 1.0, type = float)
+parser.add_argument('--stem_deduct', action='store_true') # default is false
 
 def adjust_learning_rate(args, optimizer, loader, step):
     max_steps = args.epochs * len(loader)
-    if args.warm_up:
-        warmup_steps = args.warm_up_epochs * len(loader)
-    else:
-        warmup_steps = 0
-    base_lr = args.base_lr * args.batch_size / 512.0
+    # warmup_steps = 10 * len(loader)
+    warmup_steps = 0
+    base_lr = args.base_lr * args.batch_size / 256
     if step < warmup_steps:
         lr = base_lr * step / warmup_steps
     else:
         step -= warmup_steps
         max_steps -= warmup_steps
         q = 0.5 * (1 + math.cos(math.pi * step / max_steps))
-        end_lr = base_lr * args.end_lr_fraction
+        end_lr = base_lr * 0.001
         lr = base_lr * q + end_lr * (1 - q)
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
@@ -188,6 +188,87 @@ class LARS(optim.Optimizer):
                 p.add_(mu, alpha=-g["lr"])
 
 
+def RGB2Gray(video):
+    # formula of RGB to gray: Y = 0.2125 R + 0.7154 G + 0.0721 B
+    # convert a batch of rgb video frames augmented in 2 different ways into grayscale
+    # shape of the input "video" is [B, N, C, T, H, W]
+    # shape of the output "grayscle" is [B, N, T, H, W]
+    gray = 0.2125*video[:,:,0,:,:,:] + 0.7154*video[:,:,1,:,:,:] + 0.0721*video[:,:,2,:,:,:]
+
+    return gray
+
+def padding(data):
+    # padding H and W by 1 with replicated value
+    # F.pad(input, (1,1,1,1,0,0), mode = 'replicate') supposed to do the same thing
+    # but when running F.pad(...) there is a strange error 
+    pad_data_tmp = torch.cat((data[...,0:1], data, data[...,-1:]),4)
+    pad_data = torch.cat((pad_data_tmp[...,0:1,:], pad_data_tmp, pad_data_tmp[...,-1:,:]),3)
+    return pad_data
+
+def poisson_blend(Ix,Iy,iteration=50):
+    #Ix, Iy can only be np array...?
+    #shape of Ix and Iy are now B, N, T, H, W
+    device = Ix.device
+    lap_blend = torch.zeros(Ix.shape,  device=device)
+
+
+    # Perform Poisson iteration
+    for i in range(iteration):
+        lap_blend_old = lap_blend.detach().clone()
+        # Update the Laplacian values at each pixel
+        grad = 1/4 * (Ix[...,1:-1,2:] -  Iy[...,1:-1,1:-1]
+                    + Iy[...,2:,1:-1] -  Ix[...,1:-1,1:-1])
+        lap_blend_old_tmp = 1/4 * (lap_blend_old[...,2:,1:-1] + lap_blend_old[...,0:-2,1:-1]
+                                 + lap_blend_old[...,1:-1,2:] + lap_blend_old[...,1:-1,0:-2])
+
+        lap_blend[...,1:-1,1:-1] = lap_blend_old_tmp + grad
+        # Check for convergence
+        if torch.sum(torch.abs(lap_blend - lap_blend_old)) < 0.1:
+            #print("converged")
+            break
+    # Return the blended image
+    return lap_blend
+
+def vizDiff(d,thresh=0.24):
+    # shape of input is B,N,T,H,W
+    device = d.device
+    diff = d.detach().clone()
+    rgb_diff = 0
+    B,N,T,H,W = diff.shape
+    rgb_diff = torch.zeros([B,N,3,T,H,W], device=device) #background is zero
+    diff[abs(diff)<thresh] = 0
+    rgb_diff[:,:,0,...][diff>0] = diff[diff>0] # diff[diff>0]
+    rgb_diff[:,:,1,...][diff>0] = diff[diff>0]
+    rgb_diff[:,:,2,...][diff>0] = diff[diff>0]
+
+    rgb_diff[:,:,0,...][diff<0] = diff[diff<0]
+    rgb_diff[:,:,1,...][diff<0] = diff[diff<0]
+    rgb_diff[:,:,2,...][diff<0] = diff[diff<0]
+    return rgb_diff
+
+def get_spatial_diff(data):
+    # data is grayscale-like and the shape of input data is B, N, T, H, W
+    # TODO: complete the function without change the input
+    # step1: get SD_x and SD_y, both with shape B,N,T,H,W
+    # step2: use poisson blending to get SD_xy
+    # step3: based on the value of SD_xy in the last two dimensions, convert it back to B, N, C, T,H,W
+    padded_data = padding(data)
+    SD_x = (padded_data[...,1:-1,:-2] - padded_data[...,1:-1, 2:])/2
+    SD_y = (padded_data[...,:-2,1:-1] - padded_data[...,2:,1:-1])/2
+    SD_xy = poisson_blend(SD_x, SD_y)
+    SD_xy = vizDiff(SD_xy)
+    return SD_xy
+
+def get_temporal_diff(data):
+    # data is grascale-like and the shape of input data is B, N, T, H, W
+    # TODO: complete the function without change the input
+    # step1: get TD, with shape B,N,T-1,H,W
+    # step2 convert TD back to B,N,C,T,H,W
+    TDiff = data[:,:,1:,:,:] - data[:,:,:-1,:,:]
+    TDiff = vizDiff(TDiff)
+    return TDiff
+
+
 def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scaler=None, train=True, diff=False, mix=False, mix2=False):
     if train:
         model.train()
@@ -201,66 +282,69 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
         # TODO: be careful with video size
         # N = 2 by default
         video, label = data # B, N, C, T, H, W
-        # print(video.shape)
+        # print("shape of original video is:", video.shape)
+        # print("shape of video_gray is:", grayscale_video.shape)
+        # print("shape of video_sd is: ", video_sd.shape)
+        # print("shape of video_td is: ", video_td.shape)
         label = label.to(gpu)
         video = video.to(gpu)
 
-        # random differentiation step
-        # if rand:
-        if random.random() < 0.5:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
+        grayscale_video = RGB2Gray(video) # B,N,T,H,W
+        video_sd = get_spatial_diff(grayscale_video)
+        video_td = get_temporal_diff(grayscale_video)
 
-        # scheduled differentiation step
-        if diff:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-        if mix:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,1,:,:,:,:] = video_diff[:,1,:,:,:,:]
-        if mix2:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,0,:,:,:,:] = video_diff[:,0,:,:,:,:]
 
         lr = adjust_learning_rate(args, optimizer, train_loader, step)
 
         optimizer.zero_grad()
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            loss = model(video)
+        with torch.cuda.amp.autocast():
+            loss = model(video, video_sd, video_td)
             if train:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
-        total_loss += loss.mean().item() 
-    
+        total_loss += loss.mean().item()
+
     return total_loss/num_batches
 
 
 def main():
-    torch.manual_seed(233)
-    np.random.seed(233)
-
     args = parser.parse_args()
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
 
     torch.backends.cudnn.benchmark = True
     init_distributed_mode(args)
     print(args)
     gpu = torch.device(args.device)
-    
-    model_select = SWINCLR
+
+    model_select = VICCLRSDTD
 
     if args.infonce:
-        ind_name = 'nce'
+        ind_name = 'nce2s'
     else:
-        ind_name = 'pcn'
+        ind_name = 'pcn2s'
 
-    model_name = 'swin3dtiny'
-    swinTransformer = models.video.swin3d_t()
-
-    # # tricks provided in MOCO-v3, freeze the patch-embed projection layer
-    if args.freeze_pat_embd:
-        for param in swinTransformer.patch_embed.parameters():
-            param.requires_grad = False
+    if args.r21d:
+        model_name = 'r21d18'
+        resnet1 = models.video.r2plus1d_18()
+        resnet2 = models.video.r2plus1d_18()
+    elif args.mc3:
+        model_name = 'mc318'
+        resnet1 = models.video.mc3_18()
+        resnet2 = models.video.mc3_18()
+    elif args.s3d:
+        model_name = 's3d'
+        resnet1 = models.video.s3d()
+        resnet1.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        resnet2 = models.video.s3d()
+        resnet2.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+    else:
+        model_name = 'r3d18'
+        resnet1 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct)
+        resnet2 = r3d_18(width_deduction_ratio = args.width_deduction_ratio, stem_deduct = args.stem_deduct)
 
     if args.k400:
         dataname = 'k400'
@@ -272,16 +356,18 @@ def main():
         dataname = 'minik'
     else:
         dataname = 'ucf'
-
-    if args.infonce: # SimCLR
-        ckpt_folder='/data/checkpoints_yehengz/swin_ViDiDi/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ns%s_ds%s_sl%s_il%s_nw_rand%s_warmup%s_warmup_epochs%s_projection_size%s_proj_hidden%s_tau%s_epoch_num%s' \
-            % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.num_seq, args.downsample, args.seq_len, args.inter_len, args.random, args.warm_up, args.warm_up_epochs, args.projection, args.proj_hidden, args.temperature, args.epochs)
-    else: # VICReg
-        ckpt_folder='/data/checkpoints_yehengz/swin_ViCReg_ViDiDi/%s%s_%s_%s/sym%s_bs%s_lr%s_end_lr_frac%s_wd%s_ns%s_ds%s_sl%s_il%s_nw_rand%s_warmup%s_warmup_epochs%s_projection_size%s_proj_hidden%s_freeze_pat_embd%s_mse_l%s_std_l%s_cov_l%s_epoch_num%s' \
-            % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.end_lr_fraction, args.wd, args.num_seq, args.downsample, args.seq_len, args.inter_len, args.random, args.warm_up, args.warm_up_epochs, args.projection, args.proj_hidden, args.freeze_pat_embd, args.mse_l, args.std_l, args.cov_l, args.epochs)
-
     
-    
+    if args.concat:
+        operation = "_concatenation"
+        print('We are using concatenation.')
+    else:
+        operation = "_summation"
+        print('We are using 0.5*original + 0.25*sd + 0.25*td')
+
+
+    ckpt_folder='/data/checkpoints_yehengz/resnet_sdtd/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_feature_size%s_projection%s_proj_hidden%s_epochs%s_seed%s_operation%s_width_deduc_ratio%s_stem_deduct%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.feature_size, args.projection, args.proj_hidden, args.epochs, args.seed, operation, args.width_deduction_ratio, args.stem_deduct)
+
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
 
@@ -290,10 +376,11 @@ def main():
             os.makedirs(ckpt_folder)
         logging.basicConfig(filename=os.path.join(ckpt_folder, 'net3d_vic_train.log'), level=logging.INFO)
         logging.info('Started')
-   
+
 
     model = model_select(
-        swinTransformer,
+        resnet1,
+        resnet2,
         hidden_layer = 'avgpool',
         feature_size = args.feature_size,
         projection_size = args.projection,
@@ -304,7 +391,7 @@ def main():
         std_l = args.std_l,
         cov_l = args.cov_l,
         infonce = args.infonce,
-        temperature = args.temperature
+        concat = args.concat, # determine if we perform sum or concatenation operation on outputs of f1 and f2
     ).cuda(gpu)
     # sync bn does not works for ode
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -312,14 +399,14 @@ def main():
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu], find_unused_parameters=True)
 
     # optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    optimizer = torch.optim.AdamW(model.parameters(), eps=1e-8, lr=args.base_lr, weight_decay=args.wd)
-    # optimizer = LARS(
-    #     model.parameters(),
-    #     lr=0,
-    #     weight_decay=args.wd,
-    #     weight_decay_filter=exclude_bias_and_norm,
-    #     lars_adaptation_filter=exclude_bias_and_norm,
-    # )
+    # optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    optimizer = LARS(
+        model.parameters(),
+        lr=0,
+        weight_decay=args.wd,
+        weight_decay_filter=exclude_bias_and_norm,
+        lars_adaptation_filter=exclude_bias_and_norm,
+    )
 
     if args.pretrain:
         pretrain_path = os.path.join(args.pretrain_folder, 'net3d_epoch%s.pth.tar' % args.resume_epoch)
@@ -328,7 +415,7 @@ def main():
         optimizer.load_state_dict(ckpt["optimizer"])
 
     assert args.batch_size % args.world_size == 0
-    
+
     per_device_batch_size = args.batch_size // args.world_size
     # print(per_device_batch_size)
 
@@ -343,12 +430,12 @@ def main():
     else:
         loader_method = get_data_ucf
 
-    train_loader = loader_method(batch_size=per_device_batch_size, 
-                                mode='train', 
-                                transform_consistent=None, 
+    train_loader = loader_method(batch_size=per_device_batch_size,
+                                mode='train',
+                                transform_consistent=None,
                                 transform_inconsistent=default_transform(),
-                                seq_len=args.seq_len, 
-                                num_seq=args.num_seq, 
+                                seq_len=args.seq_len,
+                                num_seq=args.num_seq,
                                 downsample=args.downsample,
                                 random=args.random,
                                 inter_len=args.inter_len,
@@ -357,12 +444,12 @@ def main():
                                 dim=150,
                                 fraction=args.fraction,
                                 )
-    # test_loader = get_data_ucf(batch_size=per_device_batch_size, 
+    # test_loader = get_data_ucf(batch_size=per_device_batch_size,
     #                             mode='val',
-    #                             transform_consistent=None, 
+    #                             transform_consistent=None,
     #                             transform_inconsistent=default_transform2(),
-    #                             seq_len=args.seq_len, 
-    #                             num_seq=args.num_seq, 
+    #                             seq_len=args.seq_len,
+    #                             num_seq=args.num_seq,
     #                             downsample=args.downsample,
     #                             random=args.random,
     #                             inter_len=args.inter_len,
@@ -371,11 +458,8 @@ def main():
     #                             dim = 240,
     #                             fraction = args.fraction
     #                             )
-    
+
     train_loss_list = []
-    train_loss_list2 = []
-    train_loss_list3 = []
-    train_loss_list4 = []
     epoch_list = range(args.start_epoch, args.epochs)
     lowest_loss = np.inf
     best_epoch = 0
@@ -383,64 +467,60 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
-
-        # # TODO: differentiation control
-        if i%4 == 0:
-            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        elif i%4 == 1:
-            train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        elif i%4 == 2:
-            train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-        else:
-            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-        # # break
         
+        train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
+
         # current_time = time.time()
         if args.rank == 0:
-            if i%4 == 3:
-            # if i%3 == 2:
-            # if i%2 == 1:
-                if train_loss < lowest_loss:
-                    lowest_loss = train_loss
-                    best_epoch = i + 1
+            if train_loss < lowest_loss:
+                lowest_loss = train_loss
 
-            if i%4 == 0:
-                train_loss_list2.append(train_loss2)
-                print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-                logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-            elif i%4 == 1:
-                train_loss_list3.append(train_loss3)
-                print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-                logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-            elif i%4 == 2:
-                train_loss_list4.append(train_loss4)
-                print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-                logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-            else:
-                train_loss_list.append(train_loss)
-                print('Epoch: %s, Train loss: %s' % (i, train_loss))
-                logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+            train_loss_list.append(train_loss)
+            print('Epoch: %s, Train loss: %s' % (i, train_loss))
+            logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
 
 
-            # j = int(i/4)
-            # if ((j+1)%10 == 0 or j<20) and i%4 == 3:
+
+            
             if (i+1)%100 == 0:
                 # save your improved network
-                checkpoint_path = os.path.join(
-                    ckpt_folder, 'swinTransformer_epoch%s.pth.tar' % str(i+1))
-                torch.save(swinTransformer.state_dict(), checkpoint_path)
+                # save the weight of encoder1
+                checkpoint_path1 = os.path.join(
+                    ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(i+1))
+                torch.save(resnet1.state_dict(), checkpoint_path1)
+                # save the weight of encoder2
+                checkpoint_path2 = os.path.join(
+                    ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(i+1))
+                torch.save(resnet2.state_dict(), checkpoint_path2)
+
                 # save whole model and optimizer
                 state = dict(
                     model=model.state_dict(),
                     optimizer=optimizer.state_dict(),
                 )
                 checkpoint_path = os.path.join(
-                    ckpt_folder, 'swin3d_epoch%s.pth.tar' % str(i+1))
+                    ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
                 torch.save(state, checkpoint_path)
+            # elif (i+1)<100 and (i+1)%10 == 0: # save weight at epoch 10, 20, 30, 40, 50, 60, 70, 80, 90
+            #     # save your improved network
+            #     # save the weight of encoder1
+            #     checkpoint_path1 = os.path.join(
+            #         ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(i+1))
+            #     torch.save(resnet1.state_dict(), checkpoint_path1)
+            #     # save the weight of encoder2
+            #     checkpoint_path2 = os.path.join(
+            #         ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(i+1))
+            #     torch.save(resnet2.state_dict(), checkpoint_path2)
+
+            #     # save whole model and optimizer
+            #     state = dict(
+            #         model=model.state_dict(),
+            #         optimizer=optimizer.state_dict(),
+            #     )
+            #     checkpoint_path = os.path.join(
+            #         ckpt_folder, 'net3d_epoch%s.pth.tar' % str(i+1))
+            #     torch.save(state, checkpoint_path)
+
 
     if args.rank == 0:
         logging.info('Training from ep %d to ep %d finished' %
@@ -448,24 +528,26 @@ def main():
         logging.info('Best epoch: %s' % best_epoch)
 
         # save your improved network
-        checkpoint_path = os.path.join(
-            ckpt_folder, 'swinTransformer_epoch%s.pth.tar' % str(args.epochs))
-        torch.save(swinTransformer.state_dict(), checkpoint_path)
+        # save the weight of encoder1
+        checkpoint_path1 = os.path.join(
+            ckpt_folder, 'resnet1_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(resnet1.state_dict(), checkpoint_path1)
+        # save the weight of encoder2
+        checkpoint_path2 = os.path.join(
+            ckpt_folder, 'resnet2_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(resnet2.state_dict(), checkpoint_path2)
         state = dict(
                 model=model.state_dict(),
                 optimizer=optimizer.state_dict(),
             )
         checkpoint_path = os.path.join(
-            ckpt_folder, 'swin3d_epoch%s.pth.tar' % str(args.epochs))
+            ckpt_folder, 'net3d_epoch%s.pth.tar' % str(args.epochs))
         torch.save(state, checkpoint_path)
 
 
-        plot_list = range(args.start_epoch, args.epochs, 4)
+        plot_list = range(args.start_epoch, args.epochs)
         # plot training process
         plt.plot(plot_list, train_loss_list, label = 'train')
-        plt.plot(plot_list, train_loss_list2, label = 'train2')
-        plt.plot(plot_list, train_loss_list3, label = 'train3')
-        plt.plot(plot_list, train_loss_list4, label = 'train4')
 
         plt.legend()
         plt.savefig(os.path.join(
@@ -475,36 +557,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-4 --warm_up
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-4 --warm_up --temperature 0.2
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-4 --warm_up --temperature 0.3
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-4 --warm_up --projection 4096 --proj_hidden 4096
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-5 --warm_up
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 2e-4 --warm_up
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 3e-4 --warm_up
-    
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 300 --base_lr 7e-5 --warm_up --temperature 0.1
-
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num300 --epoch_num 300 --gpu '7' --swin
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 400 --base_lr 7e-5 --warm_up --temperature 0.1
-
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num400 --epoch_num 400 --gpu '7' --swin
-
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 5e-4 --warm_up 
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 6.4e-4 --warm_up 
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --warm_up --temperature 0.05
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --warm_up --temperature 0.2
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --warm_up --temperature 0.3
-
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.0005_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num100 --epoch_num 100 --gpu '6' --swin
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00064_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num100 --epoch_num 100 --gpu '7' --swin
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.05_epoch_num100 --epoch_num 100 --gpu '5' --swin
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.2_epoch_num100 --epoch_num 100 --gpu '4' --swin
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.3_epoch_num100 --epoch_num 100 --gpu '3' --swin
-    
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 2.8e-4 --warm_up --temperature 0.1 -- batch_size 128
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs128_lr0.00028_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num100 --epoch_num 100 --gpu '6' --swin

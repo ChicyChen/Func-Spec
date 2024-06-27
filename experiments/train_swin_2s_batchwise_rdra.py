@@ -1,6 +1,7 @@
 import os
 import sys
 from importlib import reload
+import copy
 # reload(sys)
 # sys.setdefaultencoding('utf-8')
 import argparse
@@ -8,7 +9,9 @@ sys.path.append("/home/yehengz/Func-Spec/utils")
 sys.path.append("/home/yehengz/Func-Spec/net3d")
 sys.path.append("/home/yehengz/Func-Spec/dataload")
 
-from swinclr import SWINCLR
+
+from swinclr2srdra import SWINCLR2SRDRA
+
 
 import random
 import math
@@ -69,10 +72,9 @@ parser.add_argument('--sym_loss', action='store_true')
 
 
 parser.add_argument('--feature_size', default=768, type=int)
-parser.add_argument('--projection', default=2048, type=int)
-parser.add_argument('--proj_hidden', default=2048, type=int)
+parser.add_argument('--projection', default=2048, type=int) #  supposed to be 128 or 192 for SimCLR
+parser.add_argument('--proj_hidden', default=2048, type=int) # supposed to be 3072 for SimCLR
 parser.add_argument('--proj_layer', default=3, type=int)
-
 
 parser.add_argument('--mse_l', default=1.0, type=float)
 parser.add_argument('--std_l', default=1.0, type=float)
@@ -83,8 +85,6 @@ parser.add_argument('--temperature', default = 0.1, type = float)
 parser.add_argument('--base_lr', default=4.8, type=float)
 parser.add_argument('--warm_up', action = "store_true") #default value is false
 parser.add_argument('--warm_up_epochs', default=10, type=int)
-parser.add_argument('--end_lr_fraction', default=0.001, type=float)
-parser.add_argument('--freeze_pat_embd', action = "store_true")
 
 # Running
 parser.add_argument("--num-workers", type=int, default=128)
@@ -108,6 +108,12 @@ parser.add_argument('--minik', action='store_true')
 parser.add_argument('--k400', action='store_true')
 parser.add_argument('--fraction', default=1.0, type=float)
 
+parser.add_argument('--seed', default=233, type = int) # add a seed argument that allows different random initilization of weight
+parser.add_argument('--concat', action='store_true') # default value is false, this arugment decide if we are summing two output from each encoders or concatenating them
+parser.add_argument('--prob_derivative', default = 0.5, type = float)
+parser.add_argument('--prob_average', default = 0.5, type = float)
+
+
 
 def adjust_learning_rate(args, optimizer, loader, step):
     max_steps = args.epochs * len(loader)
@@ -122,7 +128,7 @@ def adjust_learning_rate(args, optimizer, loader, step):
         step -= warmup_steps
         max_steps -= warmup_steps
         q = 0.5 * (1 + math.cos(math.pi * step / max_steps))
-        end_lr = base_lr * args.end_lr_fraction
+        end_lr = base_lr * 0.001
         lr = base_lr * q + end_lr * (1 - q)
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
@@ -200,33 +206,27 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
     for step, data in enumerate(train_loader, start=epoch * len(train_loader)):
         # TODO: be careful with video size
         # N = 2 by default
-        video, label = data # B, N, C, T, H, W
-        # print(video.shape)
+        video_rd, label = data # B, N, C, T, H, W
+        video_ra = copy.deepcopy(video_rd)
         label = label.to(gpu)
-        video = video.to(gpu)
+        video_rd = video_rd.to(gpu)
+        video_ra = video_ra.to(gpu)
+        if random.random() < args.prob_derivative:
+            video_rd = video_rd[:,:,:,1:,:,:] - video_rd[:,:,:,:-1,:,:]
+        
+        B, N, C, T, H, W = video_rd.shape # keep shape of two input constant
+        if random.random() < args.prob_average:
+            frame_average = torch.mean(video_ra, dim = 3, keepdim = True)
+            video_ra = torch.repeat_interleave(frame_average, T, dim = 3)
+        else:
+            video_ra = video_ra[:,:,:,0:T,:,:]
 
-        # random differentiation step
-        # if rand:
-        if random.random() < 0.5:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-
-        # scheduled differentiation step
-        if diff:
-            video = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-        if mix:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,1,:,:,:,:] = video_diff[:,1,:,:,:,:]
-        if mix2:
-            video_diff = video[:,:,:,1:,:,:] - video[:,:,:,:-1,:,:]
-            video = video[:,:,:,:-1,:,:]
-            video[:,0,:,:,:,:] = video_diff[:,0,:,:,:,:]
-
+    
         lr = adjust_learning_rate(args, optimizer, train_loader, step)
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            loss = model(video)
+            loss = model(video_rd, video_ra)
             if train:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -237,17 +237,18 @@ def train_one_epoch(args, model, train_loader, optimizer, epoch, gpu=None, scale
 
 
 def main():
-    torch.manual_seed(233)
-    np.random.seed(233)
-
     args = parser.parse_args()
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
 
     torch.backends.cudnn.benchmark = True
     init_distributed_mode(args)
     print(args)
     gpu = torch.device(args.device)
     
-    model_select = SWINCLR
+    model_select = SWINCLR2SRDRA
 
     if args.infonce:
         ind_name = 'nce'
@@ -255,12 +256,9 @@ def main():
         ind_name = 'pcn'
 
     model_name = 'swin3dtiny'
-    swinTransformer = models.video.swin3d_t()
 
-    # # tricks provided in MOCO-v3, freeze the patch-embed projection layer
-    if args.freeze_pat_embd:
-        for param in swinTransformer.patch_embed.parameters():
-            param.requires_grad = False
+    swinTransformer1 = models.video.swin3d_t()
+    swinTransformer2 = models.video.swin3d_t()
 
     if args.k400:
         dataname = 'k400'
@@ -273,14 +271,13 @@ def main():
     else:
         dataname = 'ucf'
 
-    if args.infonce: # SimCLR
-        ckpt_folder='/data/checkpoints_yehengz/swin_ViDiDi/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ns%s_ds%s_sl%s_il%s_nw_rand%s_warmup%s_warmup_epochs%s_projection_size%s_proj_hidden%s_tau%s_epoch_num%s' \
-            % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.num_seq, args.downsample, args.seq_len, args.inter_len, args.random, args.warm_up, args.warm_up_epochs, args.projection, args.proj_hidden, args.temperature, args.epochs)
-    else: # VICReg
-        ckpt_folder='/data/checkpoints_yehengz/swin_ViCReg_ViDiDi/%s%s_%s_%s/sym%s_bs%s_lr%s_end_lr_frac%s_wd%s_ns%s_ds%s_sl%s_il%s_nw_rand%s_warmup%s_warmup_epochs%s_projection_size%s_proj_hidden%s_freeze_pat_embd%s_mse_l%s_std_l%s_cov_l%s_epoch_num%s' \
-            % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.end_lr_fraction, args.wd, args.num_seq, args.downsample, args.seq_len, args.inter_len, args.random, args.warm_up, args.warm_up_epochs, args.projection, args.proj_hidden, args.freeze_pat_embd, args.mse_l, args.std_l, args.cov_l, args.epochs)
+    if args.concat:
+        operation = "_concatenation"
+    else:
+        operation = "_summation"
 
-    
+    ckpt_folder='/data/checkpoints_yehengz/swin_2s_batchwise_rdra/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_warmup%s_warmup_epochs%s_projection_size%s_proj_hidden%s_tau%s_epoch_num%s_operation%s_prob_derivative%s_prob_average%s_seed%s' \
+        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.warm_up, args.warm_up_epochs, args.projection, args.proj_hidden, args.temperature, args.epochs, operation, args.prob_derivative, args.prob_average, args.seed)
     
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
@@ -293,7 +290,8 @@ def main():
    
 
     model = model_select(
-        swinTransformer,
+        swinTransformer1,
+        swinTransformer2,
         hidden_layer = 'avgpool',
         feature_size = args.feature_size,
         projection_size = args.projection,
@@ -304,7 +302,8 @@ def main():
         std_l = args.std_l,
         cov_l = args.cov_l,
         infonce = args.infonce,
-        temperature = args.temperature
+        concat = args.concat,
+        temperature = args.temperature,
     ).cuda(gpu)
     # sync bn does not works for ode
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -383,56 +382,31 @@ def main():
     # start_time = last_logging = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for i in epoch_list:
-
-        # # TODO: differentiation control
-        if i%4 == 0:
-            train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-            # train_loss2 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-        elif i%4 == 1:
-            train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-            # train_loss3 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix=True)
-        elif i%4 == 2:
-            train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-            # train_loss4 = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, mix2=True)
-        else:
-            train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
-            # train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler, diff=True) 
-        # # break
+        train_loss = train_one_epoch(args, model, train_loader, optimizer, i, gpu, scaler)
         
         # current_time = time.time()
         if args.rank == 0:
-            if i%4 == 3:
-            # if i%3 == 2:
-            # if i%2 == 1:
-                if train_loss < lowest_loss:
-                    lowest_loss = train_loss
-                    best_epoch = i + 1
+            if train_loss < lowest_loss:
+                lowest_loss = train_loss
+                best_epoch = i + 1
 
-            if i%4 == 0:
-                train_loss_list2.append(train_loss2)
-                print('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-                logging.info('Epoch: %s, Train2 loss: %s' % (i, train_loss2))
-            elif i%4 == 1:
-                train_loss_list3.append(train_loss3)
-                print('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-                logging.info('Epoch: %s, Train3 loss: %s' % (i, train_loss3))
-            elif i%4 == 2:
-                train_loss_list4.append(train_loss4)
-                print('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-                logging.info('Epoch: %s, Train4 loss: %s' % (i, train_loss4))
-            else:
-                train_loss_list.append(train_loss)
-                print('Epoch: %s, Train loss: %s' % (i, train_loss))
-                logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
+            train_loss_list.append(train_loss)
+            print('Epoch: %s, Train loss: %s' % (i, train_loss))
+            logging.info('Epoch: %s, Train loss: %s' % (i, train_loss))
 
 
             # j = int(i/4)
             # if ((j+1)%10 == 0 or j<20) and i%4 == 3:
             if (i+1)%100 == 0:
                 # save your improved network
-                checkpoint_path = os.path.join(
-                    ckpt_folder, 'swinTransformer_epoch%s.pth.tar' % str(i+1))
-                torch.save(swinTransformer.state_dict(), checkpoint_path)
+                checkpoint_path1 = os.path.join(
+                    ckpt_folder, 'swinTransformer1_epoch%s.pth.tar' % str(i+1))
+                torch.save(swinTransformer1.state_dict(), checkpoint_path1)
+
+                checkpoint_path2 = os.path.join(
+                    ckpt_folder, 'swinTransformer2_epoch%s.pth.tar' % str(i+1))
+                torch.save(swinTransformer2.state_dict(), checkpoint_path2)
+                
                 # save whole model and optimizer
                 state = dict(
                     model=model.state_dict(),
@@ -448,9 +422,14 @@ def main():
         logging.info('Best epoch: %s' % best_epoch)
 
         # save your improved network
-        checkpoint_path = os.path.join(
-            ckpt_folder, 'swinTransformer_epoch%s.pth.tar' % str(args.epochs))
-        torch.save(swinTransformer.state_dict(), checkpoint_path)
+        checkpoint_path1 = os.path.join(
+            ckpt_folder, 'swinTransformer1_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(swinTransformer1.state_dict(), checkpoint_path1)
+
+        checkpoint_path2 = os.path.join(
+            ckpt_folder, 'swinTransformer2_epoch%s.pth.tar' % str(args.epochs))
+        torch.save(swinTransformer2.state_dict(), checkpoint_path2)
+
         state = dict(
                 model=model.state_dict(),
                 optimizer=optimizer.state_dict(),
@@ -460,12 +439,9 @@ def main():
         torch.save(state, checkpoint_path)
 
 
-        plot_list = range(args.start_epoch, args.epochs, 4)
+        plot_list = range(args.start_epoch, args.epochs)
         # plot training process
         plt.plot(plot_list, train_loss_list, label = 'train')
-        plt.plot(plot_list, train_loss_list2, label = 'train2')
-        plt.plot(plot_list, train_loss_list3, label = 'train3')
-        plt.plot(plot_list, train_loss_list4, label = 'train4')
 
         plt.legend()
         plt.savefig(os.path.join(
@@ -475,36 +451,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-4 --warm_up
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-4 --warm_up --temperature 0.2
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-4 --warm_up --temperature 0.3
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-4 --warm_up --projection 4096 --proj_hidden 4096
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 1e-5 --warm_up
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 2e-4 --warm_up
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 100 --base_lr 3e-4 --warm_up
-    
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 300 --base_lr 7e-5 --warm_up --temperature 0.1
-
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num300 --epoch_num 300 --gpu '7' --swin
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin.py --sym_loss --infonce --epochs 400 --base_lr 7e-5 --warm_up --temperature 0.1
-
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr7e-05_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num400 --epoch_num 400 --gpu '7' --swin
-
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 5e-4 --warm_up 
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 6.4e-4 --warm_up 
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --warm_up --temperature 0.05
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --warm_up --temperature 0.2
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --warm_up --temperature 0.3
-
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.0005_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num100 --epoch_num 100 --gpu '6' --swin
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00064_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num100 --epoch_num 100 --gpu '7' --swin
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.05_epoch_num100 --epoch_num 100 --gpu '5' --swin
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.2_epoch_num100 --epoch_num 100 --gpu '4' --swin
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.3_epoch_num100 --epoch_num 100 --gpu '3' --swin
-    
-
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_ViDiDi.py --sym_loss --infonce --epochs 100 --base_lr 2.8e-4 --warm_up --temperature 0.1 -- batch_size 128
-# python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_ViDiDi_updated/ucf1.0_nce_swin3dtiny/symTrue_bs128_lr0.00028_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num100 --epoch_num 100 --gpu '6' --swin

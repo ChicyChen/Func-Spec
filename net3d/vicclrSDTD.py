@@ -19,9 +19,15 @@ import torch.distributed as dist
 
 from helpers import *
 
-# main class
 
-class SWINCLR2SRDRA(nn.Module): # DE for double encoder
+# main class
+# the VICCLRSDTD class is a two stream self-supervised learning model that inspired by the human visual system.
+# Further inspired by the effective design in tianmouc, the model split into two stream.
+# One stream sees the augmented data in a conventional ssl manner, 
+# and the other stream sees both the spatial and temporal difference (SD and TD) of the augmented data
+# The one sees SD and TD hopefully can serve as the dorsal path, while the other one hopefully can serve as the ventral path
+
+class VICCLRSDTD(nn.Module): 
     def __init__(
       self,
       net1,
@@ -37,7 +43,6 @@ class SWINCLR2SRDRA(nn.Module): # DE for double encoder
       cov_l = 0.04,
       infonce = False,
       concat = False,
-      temperature = 0.1
   ):
       super().__init__()
 
@@ -61,7 +66,7 @@ class SWINCLR2SRDRA(nn.Module): # DE for double encoder
 
       self.infonce = infonce
       self.concat = concat
-      self.temperature = temperature
+
     def loss_fn(self, x, y):
       # x: B, N-1, D; D = output dimension after projection
       # y: B, N-1, D; D = output dimension after projection
@@ -70,7 +75,7 @@ class SWINCLR2SRDRA(nn.Module): # DE for double encoder
         y = y.reshape(B*M, D)
 
         if self.infonce:
-            loss = infoNCE(x, y, temperature=self.temperature)
+            loss = infoNCE(x, y)
         else:
             loss = vic_reg_nonorm_loss(x, y, self.mse_l, self.std_l, self.cov_l)
 
@@ -78,49 +83,46 @@ class SWINCLR2SRDRA(nn.Module): # DE for double encoder
 
     def forward(
         self,
-        video_rand_derivative,
-        video_rand_average  # x.shape = B, N, C, T-1, H, W
+        x , # x.shape = B, N, C, T, H, W
+        x_sd, # spatial difference in the shape of B, N, C=3, T, H, W
+        x_td # temporal differnce in the shape of B, N, C, T, H, W
     ):
-        assert not (self.training and video_rand_derivative.shape[0] == 1), 'you must have greater than 1 sample when training, due to the batchnorm in the projection layer'
+        assert not (self.training and x.shape[0] == 1), 'you must have greater than 1 sample when training, due to the batchnorm in the projection layer'
 
-        B, N, C, T, H, W = video_rand_derivative.size()
-        x1_rd = video_rand_derivative[:,0,:,:,:,:] # x1 shape is B, 1, C, T, H, W; x1 is the frame images with first data augmentation process
-        x2_rd = video_rand_derivative[:,1,:,:,:,:] # x2 shape is B, 1, C, T, H, W; x2 is the frame images with second data augmentation process
-        x1_ra = video_rand_average[:,0,:,:,:,:]
-        x2_ra = video_rand_average[:,1,:,:,:,:]
+        # do we need these 3 conditions?
+        assert (x.shape == x_sd.shape), 'the shape of the data does not match the shape of its spatial difference'
+        # assert (x.shape == x_td.shape), 'the shape of the data does not match the shape of its temporal difference'
+        # assert (x_sd.shape == x_td.shape), 'the shape of the spatial difference does not match the shape of temporal difference'
+
+        B, N, C, T, H, W = x.size()
+        # x1 = x[:,0,:,:,:,:] # x1 shape is B, 1, C, T, H, W; x1 is the frame images with first data augmentation process
+        # x2 = x[:,1,:,:,:,:] # x2 shape is B, 1, C, T, H, W; x2 is the frame images with second data augmentation process
 
         # ground truth latents
-        hiddenf1x1 = flatten(self.encoder1(x1_rd.view(B, C, T, H, W))) # encoder1 forward x1
-        hiddenf1x2 = flatten(self.encoder1(x2_rd.view(B, C, T, H, W))) # encoder1 forward x2
-        hiddenf2x1 = flatten(self.encoder2(x1_ra.view(B, C, T, H, W))) # encoder2 forward x1
-        hiddenf2x2 = flatten(self.encoder2(x2_ra.view(B, C, T, H, W))) # encoder2 forward x2
+        hidden = flatten(self.encoder1(x.view(B*N, C, T, H, W))) # encoder 1 process original data
+        hidden_sd = flatten(self.encoder2(x_sd.view(B*N, C, T, H, W))) # encoder 2 process spatial difference
+        hidden_td = flatten(self.encoder2(x_td.view(B*N, C, T-1, H, W))) # encoder 2 process spatial difference
 
-        gt_z_f1x1 = self.projector1(hiddenf1x1)
-        gt_z_f1x2 = self.projector1(hiddenf1x2)
-        gt_z_f2x1 = self.projector2(hiddenf2x1)
-        gt_z_f2x2 = self.projector2(hiddenf2x2)
+        gt_z_all1 = self.projector1(hidden)
+        gt_z_all_sd = self.projector2(hidden_sd)
+        gt_z_all_td = self.projector2(hidden_td)
 
-        gt_z_f1x1 = gt_z_f1x1.reshape(B, N-1, -1)
-        gt_z_f1x2 = gt_z_f1x2.reshape(B, N-1, -1)
-        gt_z_f2x1 = gt_z_f2x1.reshape(B, N-1, -1)
-        gt_z_f2x2 = gt_z_f2x2.reshape(B, N-1, -1)
 
-        # gt_z_all1 = self.projector1(hidden1) # projector1 forward for output of encoder1
-        # gt_z_all2 = self.projector2(hidden2) # projector2 forward for output of encoder2
-        # gt_z_all1 = gt_z_all1.reshape(B, N, -1) # B, N, D
-        # gt_z_all2 = gt_z_all2.reshape(B, N, -1) # B, N, D
-        # # print("shape of gt_z_all is: ", gt_z_all1.shape)
+        gt_z_all1 = gt_z_all1.reshape(B, N, -1) # B, N, D
+        gt_z_all_sd = gt_z_all_sd.reshape(B, N, -1) # B, N, D
+        gt_z_all_td = gt_z_all_td.reshape(B, N, -1) # B, N, D
+
 
         if self.concat:
             # print("Concatenation")
-            # print("shape of gt_z_all after concatenation is: ", gt_z_all_concat.shape)
-            z1 = torch.cat((gt_z_f1x1, gt_z_f2x1), dim=-1)
-            z2 = torch.cat((gt_z_f1x2, gt_z_f2x2), dim=-1)
+            gt_z_all_concat = torch.cat((gt_z_all1, gt_z_all_sd, gt_z_all_td), dim=-1) # B, N, #*D
+            z1 = gt_z_all_concat[:, :-1, :]
+            z2 = gt_z_all_concat[:, 1:, :]
 
         else: #sum
             # print("Summation")
-            z1 = gt_z_f1x1 + gt_z_f2x1
-            z2 = gt_z_f1x2 + gt_z_f2x2
+            z1 = 0.5*gt_z_all1[:, :-1, :] + 0.25*gt_z_all_sd[:, :-1, :] + 0.25*gt_z_all_td[:, :-1, :]
+            z2 = 0.5*gt_z_all1[:, 1:, :] + 0.25*gt_z_all_sd[:, 1:, :] + 0.25*gt_z_all_td[:, :-1, :]
             
 
         # no predictor, VICReg or SimCLR
@@ -151,3 +153,4 @@ class FullGatherLayer(torch.autograd.Function):
         all_gradients = torch.stack(grads)
         dist.all_reduce(all_gradients)
         return all_gradients[dist.get_rank()]
+

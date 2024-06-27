@@ -1,0 +1,14 @@
+#!/bin/bash
+
+torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_net3d_sdtd.py --epochs 100 --batch_size 64 --sym_loss --infonce --projection 128 --base_lr 1.2
+
+
+python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/resnet_sdtd/ucf1.0_nce2s_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_feature_size512_projection128_proj_hidden2048_epochs100_seed233_operation_summation_width_deduc_ratio1.0_stem_deductFalse --epoch_num 100 --which_encoder 1
+python evaluation/eval_retrieval.py --ckpt_folder /data/checkpoints_yehengz/resnet_sdtd/ucf1.0_nce2s_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_feature_size512_projection128_proj_hidden2048_epochs100_seed233_operation_summation_width_deduc_ratio1.0_stem_deductFalse --epoch_num 100 --which_encoder 2
+python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/resnet_sdtd/ucf1.0_nce2s_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_feature_size512_projection128_proj_hidden2048_epochs100_seed233_operation_summation_width_deduc_ratio1.0_stem_deductFalse --epoch_num 100 --which_encoder 1 --img_num 1
+python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/resnet_sdtd/ucf1.0_nce2s_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_feature_size512_projection128_proj_hidden2048_epochs100_seed233_operation_summation_width_deduc_ratio1.0_stem_deductFalse --epoch_num 100 --which_encoder 2 --img_num 1
+
+python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/resnet_sdtd/ucf1.0_nce2s_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_feature_size512_projection128_proj_hidden2048_epochs100_seed233_operation_summation_width_deduc_ratio1.0_stem_deductFalse --epoch_num 100 --basic
+python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/resnet_sdtd/ucf1.0_nce2s_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_feature_size512_projection128_proj_hidden2048_epochs100_seed233_operation_summation_width_deduc_ratio1.0_stem_deductFalse --epoch_num 100 --encoder_concat --basic
+python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/resnet_sdtd/ucf1.0_nce2s_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_feature_size512_projection128_proj_hidden2048_epochs100_seed233_operation_summation_width_deduc_ratio1.0_stem_deductFalse --epoch_num 100 --img_num 1
+python evaluation/image_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/resnet_sdtd/ucf1.0_nce2s_r3d18/symTrue_bs64_lr1.2_wd1e-06_ds3_sl8_nw_randFalse_feature_size512_projection128_proj_hidden2048_epochs100_seed233_operation_summation_width_deduc_ratio1.0_stem_deductFalse --epoch_num 100 --concat --img_num 1

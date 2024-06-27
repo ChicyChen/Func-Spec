@@ -3,6 +3,7 @@
 # encoder1 have prob = p to see 1st order derivative of video frame and prob = (1-p) to see the video frame.
 # encoder2 have prob = p to see average across frames and prob = (1-p) to see the video frame.
 # VICCLR2SRD means VICreg, simCLR with 2 Streams and Random Derivative and Random Average across frames
+# However, there is only one projector that make the projection of both encoders
 import copy
 import random
 from functools import wraps

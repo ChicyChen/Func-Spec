@@ -78,59 +78,58 @@ class VICCLR2S2PRVIDIDIG(nn.Module): # ViDiDi as guidance
     def forward(
         self,
         input_e1, # input_e1.shape = [B, N=2, C, T, H, W]
-        input_e2, # input_e2.shape = [B, N=2, C, T, H, W]
-        rand_diff, # boolean, if data take random differerntiation in ViDiDi schedule
-        epoch_index # use epoch index to track ViDiDi scheduler
+        input_e2 # input_e2.shape = [B, N=2, C, T, H, W]
     ):
         assert not (self.training and input_e1.shape[0] == 1), 'you must have greater than 1 sample when training, due to the batchnorm in the projection layer'
 
         # x1 = x[:,:-1,:,:,:,:] # data to stream 1 with random data augmentation process and ViDiDi scheduling
         # x2 = x[:,1:,:,:,:,:] # data to stream 2 with random data augmentatoon process and ViDiDi scheduling
-        B, N, C, T, H, W = input_e1.size() # shape of x is [B, N=2, C, T, H, W]
+        B1, N1, C1, T1, H1, W1 = input_e1.size() # shape of input_e1 is [B, N=2, C, T, H, W]
+        B2, N2, C2, T2, H2, W2 = input_e2.size() # shape of input_e2, which might be different with the one of e1 due to differernt augmentation;
 
         # ground truth latents
-        hidden1 = flatten(self.encoder1(input_e1.view(B*N, C, T, H, W))) # encoder1 forward
-        hidden2 = flatten(self.encoder2(input_e2.view(B*N, C, T, H, W))) # encoder2 forward
+        hidden1 = flatten(self.encoder1(input_e1.view(B1*N1, C1, T1, H1, W1))) # encoder1 forward
+        hidden2 = flatten(self.encoder2(input_e2.view(B2*N2, C2, T2, H2, W2))) # encoder2 forward
 
         gt_z_all1 = self.projector1(hidden1) # projector1 forward for output of encoder1
         gt_z_all2 = self.projector2(hidden2) # projector2 forward for output of encoder2
-        gt_z_all1 = gt_z_all1.reshape(B, N, -1) # B, N, D
-        gt_z_all2 = gt_z_all2.reshape(B, N, -1) # B, N, D
+        gt_z_all1 = gt_z_all1.reshape(B1, N1, -1) # B, N, D
+        gt_z_all2 = gt_z_all2.reshape(B2, N2, -1) # B, N, D
 
         
-        if rand_diff: # x1, x2 must be derivative augmented
-            # z1 = gt_z_all2[:, :-1, :] # z1 = 0 + f2(x1)
-            # z2 = gt_z_all2[:, 1:, :] # z2 = 0 + f2(x2)
-            z1 = 0*gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
-            z2 = 0*gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
+        # if rand_diff: # x1, x2 must be derivative augmented
+        #     # z1 = gt_z_all2[:, :-1, :] # z1 = 0 + f2(x1)
+        #     # z2 = gt_z_all2[:, 1:, :] # z2 = 0 + f2(x2)
+        #     z1 = 0*gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
+        #     z2 = 0*gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
 
-        else:
-            if epoch_index%4 == 0: # (d/dx1, d/dx2)
-                # z1 = gt_z_all2[:, :-1, :] # z1 = 0 + f2(x1)
-                # z2 = gt_z_all2[:, 1:, :] # z2 = 0 + f2(x2)
-                z1 = 0*gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
-                z2 = 0*gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
+        # else:
+        #     if epoch_index%4 == 0: # (d/dx1, d/dx2)
+        #         # z1 = gt_z_all2[:, :-1, :] # z1 = 0 + f2(x1)
+        #         # z2 = gt_z_all2[:, 1:, :] # z2 = 0 + f2(x2)
+        #         z1 = 0*gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
+        #         z2 = 0*gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
 
-            elif epoch_index%4 == 1: # (d/dx1, x2)
-                # z1 = gt_z_all2[:, :-1, :] # z1 = 0 + f2(x1)
-                # z2 = gt_z_all1[:, 1:, :] # z2 = f1(x2) + 0
-                z1 = 0*gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
-                z2 = gt_z_all1[:, 1:, :] + 0*gt_z_all2[:, 1:, :]
+        #     elif epoch_index%4 == 1: # (d/dx1, x2)
+        #         # z1 = gt_z_all2[:, :-1, :] # z1 = 0 + f2(x1)
+        #         # z2 = gt_z_all1[:, 1:, :] # z2 = f1(x2) + 0
+        #         z1 = 0*gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
+        #         z2 = gt_z_all1[:, 1:, :] + 0*gt_z_all2[:, 1:, :]
 
-            elif epoch_index%4 == 2: # (x1, d/dx2)
-                # z1 = gt_z_all1[:, :-1, :] # z2 = f1(x1) + 0
-                # z2 = gt_z_all2[:, 1:, :] # z2 = 0 + f2(x2)
-                z1 = gt_z_all1[:, :-1, :] + 0*gt_z_all2[:, :-1, :]
-                z2 = 0*gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
+        #     elif epoch_index%4 == 2: # (x1, d/dx2)
+        #         # z1 = gt_z_all1[:, :-1, :] # z2 = f1(x1) + 0
+        #         # z2 = gt_z_all2[:, 1:, :] # z2 = 0 + f2(x2)
+        #         z1 = gt_z_all1[:, :-1, :] + 0*gt_z_all2[:, :-1, :]
+        #         z2 = 0*gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]
 
-            else: # (x1, x2)
-                # z1 = gt_z_all1[:, :-1, :] # z1 = f1(x1) + 0
-                # z2 = gt_z_all1[:, 1:, :] # z2 = f1(x2) + 0
-                z1 = gt_z_all1[:, :-1, :] + 0*gt_z_all2[:, :-1, :]
-                z2 = gt_z_all1[:, 1:, :] + 0*gt_z_all2[:, 1:, :]
+        #     else: # (x1, x2)
+        #         # z1 = gt_z_all1[:, :-1, :] # z1 = f1(x1) + 0
+        #         # z2 = gt_z_all1[:, 1:, :] # z2 = f1(x2) + 0
+        #         z1 = gt_z_all1[:, :-1, :] + 0*gt_z_all2[:, :-1, :]
+        #         z2 = gt_z_all1[:, 1:, :] + 0*gt_z_all2[:, 1:, :]
 
-            # z1 = gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
-            # z2 = gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]        
+        z1 = gt_z_all1[:, :-1, :] + gt_z_all2[:, :-1, :]
+        z2 = gt_z_all1[:, 1:, :] + gt_z_all2[:, 1:, :]        
 
         # no predictor, VICReg or SimCLR
         loss_one = self.loss_fn(z1, z2)

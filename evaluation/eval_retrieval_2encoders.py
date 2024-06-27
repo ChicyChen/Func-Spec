@@ -122,6 +122,7 @@ def extract_features(loader, model1, model2, test=True, feature_concat = False, 
                 if test:
                     h1 = h1.reshape(B, N, -1) # B, N, D
                     h2 = h2.reshape(B, N, -1)
+                    # normalization of h1 and h2 before the average and concatenation operation?
                     label_lst.append(label)
                 else:
                     label_lst.append(torch.ones(B,N)*label)
@@ -415,3 +416,6 @@ if __name__ == '__main__':
 # python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed42 --epoch_num 400 --concat
 # python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400
 # python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/2streams/ucf1.0_nce2s_r3d18/symTrue_bs64_lr4.8_wd1e-06_ds3_sl8_nw_randFalse_seed3407 --epoch_num 400 --concat
+
+# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/swin_2s_rdra/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num400_operation_summation_prob_derivative0.5_prob_average0.5_seed233 --swin --basic
+# python evaluation/eval_retrieval_2encoders.py --ckpt_folder /data/checkpoints_yehengz/swin_2s_rdra/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num400_operation_summation_prob_derivative0.5_prob_average0.5_seed233 --swin --basic --concat

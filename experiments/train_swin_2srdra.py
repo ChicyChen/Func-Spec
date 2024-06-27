@@ -116,7 +116,7 @@ parser.add_argument('--prob_average', default = 0.5, type = float)
 def adjust_learning_rate(args, optimizer, loader, step):
     max_steps = args.epochs * len(loader)
     if args.warm_up:
-        warmup_steps = 5 * len(loader)
+        warmup_steps = 40 * len(loader)
     else:
         warmup_steps = 0
     base_lr = args.base_lr * args.batch_size*args.world_size / 512.0
@@ -401,11 +401,11 @@ def main():
             if (i+1)%100 == 0:
                 # save your improved network
                 checkpoint_path1 = os.path.join(
-                    ckpt_folder, 'swinTransformer1_epoch%s.pth.tar' % str(args.epochs))
+                    ckpt_folder, 'swinTransformer1_epoch%s.pth.tar' % str(args.epochs)) # this need to be changed to str(i+1)
                 torch.save(swinTransformer1.state_dict(), checkpoint_path1)
 
                 checkpoint_path2 = os.path.join(
-                    ckpt_folder, 'swinTransformer2_epoch%s.pth.tar' % str(args.epochs))
+                    ckpt_folder, 'swinTransformer2_epoch%s.pth.tar' % str(args.epochs)) # this need to be changed to str(i+1)
                 torch.save(swinTransformer2.state_dict(), checkpoint_path2)
                 
                 # save whole model and optimizer
@@ -453,10 +453,10 @@ def main():
 if __name__ == '__main__':
     main()
 
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_2srdra.py --sym_loss --infonce --epochs 400 --base_lr 5.6e-4 --warm_up --seed 3407 --prob_derivative 0.25 --prob_average 0.75
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_2srdra.py --sym_loss --infonce --epochs 400 --base_lr 5.6e-4 --warm_up --seed 3407 --prob_derivative 0.75 --prob_average 0.25
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_2srdra.py --sym_loss --infonce --epochs 400 --base_lr 5.6e-4 --warm_up --seed 3407 --prob_derivative 0.75 --prob_average 0.75
-# torchrun --standalone --nnodes=1 --nproc_per_node=8 experiments/train_swin_2srdra.py --sym_loss --infonce --epochs 400 --base_lr 5.6e-4 --warm_up --seed 3407 --prob_derivative 0.25 --prob_average 0.25    
+# torchrun --standalone --nnodes=1 --nproc_per_node=4 experiments/train_swin_2srdra.py --sym_loss --infonce --epochs 400 --base_lr 5.6e-4 --warm_up --seed 3407 --prob_derivative 0.25 --prob_average 0.75
+# torchrun --standalone --nnodes=1 --nproc_per_node=4 experiments/train_swin_2srdra.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --warm_up --seed 3407 --prob_derivative 0.75 --prob_average 0.25
+# torchrun --standalone --nnodes=1 --nproc_per_node=4 experiments/train_swin_2srdra.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --warm_up --seed 3407 --prob_derivative 0.75 --prob_average 0.75
+# torchrun --standalone --nnodes=1 --nproc_per_node=4 experiments/train_swin_2srdra.py --sym_loss --infonce --epochs 100 --base_lr 5.6e-4 --warm_up --seed 3407 --prob_derivative 0.25 --prob_average 0.25    
 
 # python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_2s_rdra/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num400_operation_summation_prob_derivative0.25_prob_average0.75_seed3407 --epoch_num 400 --swin --gpu '7'
 # python evaluation/image_retrieval.py --ckpt_folder /data/checkpoints_yehengz/swin_2s_rdra/ucf1.0_nce_swin3dtiny/symTrue_bs64_lr0.00056_wd1e-06_ds3_sl8_nw_randFalse_warmupTrue_projection_size2048_tau0.1_epoch_num400_operation_summation_prob_derivative0.25_prob_average0.75_seed3407 --epoch_num 400 --swin --gpu '7' --which_encoder 2

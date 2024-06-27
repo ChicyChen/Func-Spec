@@ -1,8 +1,5 @@
-# VICCLR with double encoder, the loss in defined with the direct summation or concatenation of the vector output after the projection layer.
-# The two encoders have the same architecture but different random initialization(weight are not shared)
-# encoder1 have prob = p to see 1st order derivative of video frame and prob = (1-p) to see the video frame.
-# encoder2 have prob = p to see average across frames and prob = (1-p) to see the video frame.
-# VICCLR2SRD means VICreg, simCLR with 2 Streams and Random Derivative and Random Average across frames
+# This is a deriviation from the vicclr2s. In vicclr2s, there are two encoders, and each encoder followed by a projector (so there are two encoders and two projectors)
+# In this file vicclr2s1p, however, one same projector will project the embeddings from two encoders 
 import copy
 import random
 from functools import wraps
@@ -51,6 +48,8 @@ class VICCLR2S1P(nn.Module):
       if proj_layer > 0:
           create_mlp_fn = MLP
           self.projector = create_mlp_fn(feature_size, projection_size, projection_hidden_size, proj_layer)
+          # for simclr, projection size is 128 and the projection_hidden_size is 2048;
+          # however, for vicreg, both the projection size and the projection hidden size is 2048
       else:
           self.projector = nn.Identity()
 

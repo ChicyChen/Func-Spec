@@ -44,6 +44,7 @@ parser.add_argument('--frame_root', default='/data', type=str,
 # --frame_root /data
                     
 parser.add_argument('--gpu', default='0,1,2,3,4,5,6,7', type=str)
+# in case of using 4 gpu parallel, defauly='0,1,2,3'
 
 parser.add_argument('--epochs', default=300, type=int,
                     help='number of total epochs to run')
@@ -70,10 +71,10 @@ parser.add_argument('--sym_loss', action='store_true')
 
 parser.add_argument('--feature_size', default=768, type=int)
 parser.add_argument('--projection', default=2048, type=int)
-parser.add_argument('--proj_hidden', default=2048, type=int)
+parser.add_argument('--proj_hidden', default=2048, type=int) # in ViDiDi: proj_hidden is 128 (or 256?)
 parser.add_argument('--proj_layer', default=3, type=int)
 
-parser.add_argument('--mse_l', default=1.0, type=float)
+parser.add_argument('--mse_l', default=1.0, type=float) 
 parser.add_argument('--std_l', default=1.0, type=float)
 parser.add_argument('--cov_l', default=0.04, type=float)
 parser.add_argument('--infonce', action='store_true') # default is false
@@ -81,6 +82,9 @@ parser.add_argument('--temperature', default = 0.1, type = float)
 
 parser.add_argument('--base_lr', default=4.8, type=float)
 parser.add_argument('--warm_up', action = "store_true") #default value is false
+parser.add_argument('--warm_up_epochs', default=10, type=int)
+parser.add_argument('--end_lr_fraction', default=0.001, type=float)
+parser.add_argument('--freeze_pat_embd', action = "store_true")
 
 # Running
 parser.add_argument("--num-workers", type=int, default=128)
@@ -108,7 +112,7 @@ parser.add_argument('--fraction', default=1.0, type=float)
 def adjust_learning_rate(args, optimizer, loader, step):
     max_steps = args.epochs * len(loader)
     if args.warm_up:
-        warmup_steps = 5 * len(loader)
+        warmup_steps = args.warm_up_epochs * len(loader)
     else:
         warmup_steps = 0
     base_lr = args.base_lr * args.batch_size / 512.0
@@ -118,7 +122,7 @@ def adjust_learning_rate(args, optimizer, loader, step):
         step -= warmup_steps
         max_steps -= warmup_steps
         q = 0.5 * (1 + math.cos(math.pi * step / max_steps))
-        end_lr = base_lr * 0.001
+        end_lr = base_lr * args.end_lr_fraction
         lr = base_lr * q + end_lr * (1 - q)
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
@@ -238,7 +242,7 @@ def main():
     init_distributed_mode(args)
     print(args)
     gpu = torch.device(args.device)
-    
+    print(gpu)
     model_select = SWINCLR
 
     if args.infonce:
@@ -248,6 +252,11 @@ def main():
 
     model_name = 'swin3dtiny'
     swinTransformer = models.video.swin3d_t()
+
+    # # tricks provided in MOCO-v3, freeze the patch-embed projection layer
+    if args.freeze_pat_embd:
+        for param in swinTransformer.patch_embed.parameters():
+            param.requires_grad = False
 
     if args.k400:
         dataname = 'k400'
@@ -260,9 +269,19 @@ def main():
     else:
         dataname = 'ucf'
 
-    ckpt_folder='/data/checkpoints_yehengz/swin_base/%s%s_%s_%s/sym%s_bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s_warmup%s_projection_size%s_tau%s_epoch_num%s' \
-        % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random, args.warm_up, args.projection, args.temperature, args.epochs)
+    # ckpt_folder='/data/checkpoints_yehengz/swin_base8gpu3072/%s%s_%s_%s/sym%s_bs%s_lr%s_end_lr_frac%s_wd%s_ns%s_ds%s_sl%s_il%s_nw_rand%s_warmup%s_warmup_epochs%s_projection_size%s_proj_hidden%s_tau%s_epoch_num%s' \
+    #     % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.end_lr_fraction, args.wd, args.num_seq, args.downsample, args.seq_len, args.inter_len, args.random, args.warm_up, args.warm_up_epochs, args.projection, args.proj_hidden, args.temperature, args.epochs)
     
+    if args.infonce: # SimCLR
+        ckpt_folder='/data/checkpoints_yehengz/swin_base8gpu3072/%s%s_%s_%s/sym%s_bs%s_lr%s_end_lr_frac%s_wd%s_ns%s_ds%s_sl%s_il%s_nw_rand%s_warmup%s_warmup_epochs%s_projection_size%s_proj_hidden%s_tau%s_epoch_num%s' \
+            % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.end_lr_fraction, args.wd, args.num_seq, args.downsample, args.seq_len, args.inter_len, args.random, args.warm_up, args.warm_up_epochs, args.projection, args.proj_hidden, args.temperature, args.epochs)
+    else: # VICReg
+        ckpt_folder='/data/checkpoints_yehengz/swin_ViCReg/%s%s_%s_%s/sym%s_bs%s_lr%s_end_lr_frac%s_wd%s_ns%s_ds%s_sl%s_il%s_nw_rand%s_warmup%s_warmup_epochs%s_projection_size%s_proj_hidden%s_freeze_pat_embd%s_mse_l%s_std_l%s_cov_l%s_epoch_num%s' \
+            % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.end_lr_fraction, args.wd, args.num_seq, args.downsample, args.seq_len, args.inter_len, args.random, args.warm_up, args.warm_up_epochs, args.projection, args.proj_hidden, args.freeze_pat_embd, args.mse_l, args.std_l, args.cov_l, args.epochs)
+
+    # ckpt_folder='/data/checkpoints_yehengz/swin_base_freeze_pat_em/%s%s_%s_%s/sym%s_bs%s_lr%s_end_lr_frac%s_wd%s_ns%s_ds%s_sl%s_il%s_nw_rand%s_warmup%s_warmup_epochs%s_projection_size%s_proj_hidden%s_tau%s_epoch_num%s' \
+    #     % (dataname, args.fraction, ind_name, model_name, args.sym_loss, args.batch_size, args.base_lr, args.end_lr_fraction, args.wd, args.num_seq, args.downsample, args.seq_len, args.inter_len, args.random, args.warm_up, args.warm_up_epochs, args.projection, args.proj_hidden, args.temperature, args.epochs)
+
     # ckpt_folder='/home/siyich/Func-Spec/checkpoints/%s%s_%s_%s/prj%s_hidproj%s_hidpre%s_prl%s_pre%s_np%s_pl%s_il%s_ns%s/mse%s_loop%s_std%s_cov%s_spa%s_rall%s_sym%s_closed%s_sub%s_sf%s/bs%s_lr%s_wd%s_ds%s_sl%s_nw_rand%s' \
     #     % (dataname, args.fraction, ind_name, model_name, args.projection, args.proj_hidden, args.pred_hidden, args.proj_layer, args.predictor, args.num_predictor, args.pred_layer, args.inter_len, args.num_seq, args.mse_l, args.loop_l, args.std_l, args.cov_l, args.spa_l, args.reg_all, args.sym_loss, args.closed_loop, args.sub_loss, args.sub_frac, args.batch_size, args.base_lr, args.wd, args.downsample, args.seq_len, args.random)
 

@@ -44,7 +44,7 @@ class SWINCLR(nn.Module):
 
         if proj_layer > 0:
             create_mlp_fn = MLP
-            self.projector = MLP(feature_size, projection_size, projection_hidden_size, proj_layer)
+            self.projector = create_mlp_fn(feature_size, projection_size, projection_hidden_size, proj_layer)
         else:
             self.projector = nn.Identity()
 
